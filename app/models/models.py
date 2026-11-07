@@ -31,6 +31,12 @@ class Session(Base):
     )
     max_players: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=4)
     deck_type: Mapped[str] = mapped_column(String(50), nullable=False, default="standard")
+    # Банк: сумма ставок (анте), внесённых игроками. Повышать банк нельзя,
+    # поэтому после старта партии ante фиксируется до окончания раунда.
+    ante: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Число сыгранных партий и победитель партии (никнейм), если она завершена
+    games_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    winner_nickname: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
@@ -56,6 +62,11 @@ class Player(Base):
     nickname: Mapped[str] = mapped_column(String(30), nullable=False)
     avatar: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Ставка игрока в текущей партии (анте). Меняется только до старта партии:
+    # повышение банка после начала игры запрещено правилами.
+    bet: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 1 = игрок сбросил карты (сдался) в текущем раунде
+    folded: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     is_ready: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -146,6 +157,24 @@ class Round(Base):
         ForeignKey("players.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Игрок, который обязан сделать ход сейчас
+    current_turn_player_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("players.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Игрок, чья карта на столе сейчас старшая (владелец взятки)
+    leader_player_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("players.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Сила старшей карты на столе; None = на столе нет открытых карт
+    current_power: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Раунд остановлен серией равных карт и требует переигровки
+    is_tiebreak: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    # Раунд закрыт, но ещё не рассчитан (нужна переигровка)
+    is_closed: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(

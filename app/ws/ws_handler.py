@@ -1,12 +1,21 @@
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models.models import Session, Player
-from app.schemas.schemas import WSReady, WSPlayCard, WSPass
+from app.rooms.room_manager import GameActionError
+from app.schemas.schemas import (
+    WSReady,
+    WSPlayCard,
+    WSPass,
+    WSFold,
+    WSStart,
+    WSSetBet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,50 +99,76 @@ async def websocket_join(
             data = await websocket.receive_json()
             action = data.get("action")
 
-            if action == "ready":
-                ready_data = WSReady(**data)
-                async for db in get_db():
-                    result = await room_manager.handle_ready(
-                        ready_data.player_id, db
-                    )
-                    await room_manager.broadcast_all(player.id, result)
-                    break
+            try:
+                if action == "ready":
+                    ready_data = WSReady(**data)
+                    async for db in get_db():
+                        result = await room_manager.handle_ready(
+                            ready_data.player_id, db
+                        )
+                        await room_manager.broadcast_all(player.id, result)
+                        break
 
-            elif action == "start":
-                # Запуск раунда (любой игрок может нажать, сервер решит)
-                async for db in get_db():
-                    await room_manager.start_round(join_code, db)
-                    break
+                elif action == "set_bet":
+                    bet_data = WSSetBet(**data)
+                    async for db in get_db():
+                        await room_manager.handle_set_bet(
+                            player.id, bet_data.bet, db
+                        )
+                        break
 
-            elif action == "play_card":
-                play_data = WSPlayCard(**data)
-                async for db in get_db():
-                    state = await room_manager.handle_play_card(
-                        play_data.player_id,
-                        play_data.card_id,
-                        play_data.client_action_id,
-                        db,
-                    )
-                    if state is None:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Invalid card or already played",
-                        })
-                    break
+                elif action == "start":
+                    # Запуск партии (любой игрок может нажать, сервер решит)
+                    start_data = WSStart(**data)
+                    async for db in get_db():
+                        await room_manager.start_round(
+                            join_code, db, ante=start_data.ante
+                        )
+                        break
 
-            elif action == "pass":
-                pass_data = WSPass(**data)
-                async for db in get_db():
-                    state = await room_manager.handle_pass(
-                        pass_data.player_id, pass_data.client_action_id, db
-                    )
-                    break
+                elif action == "play_card":
+                    play_data = WSPlayCard(**data)
+                    async for db in get_db():
+                        await room_manager.handle_play_card(
+                            play_data.player_id,
+                            play_data.card_id,
+                            play_data.client_action_id,
+                            db,
+                        )
+                        break
 
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Unknown action: {action}",
-                })
+                elif action in ("pass", "fold"):
+                    fold_data = WSFold(**{**data, "action": "fold"}) if action == "fold" else WSPass(**data)
+                    async for db in get_db():
+                        await room_manager.handle_fold(
+                            fold_data.player_id,
+                            fold_data.client_action_id,
+                            db,
+                            action_type="pass" if action == "pass" else "discard",
+                        )
+                        break
+
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Unknown action: {action}",
+                    })
+
+            except GameActionError as e:
+                # Нарушение правила — соединение сохраняем
+                await websocket.send_json(
+                    {"type": "error", "error_type": e.error_type, "message": e.message}
+                )
+            except ValidationError as e:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "error_type": "invalid_payload",
+                        "message": e.errors()[0].get("msg", str(e))[:150]
+                        if e.errors()
+                        else str(e)[:150],
+                    }
+                )
 
     except WebSocketDisconnect:
         logger.info(f"Player {player.nickname} disconnected")

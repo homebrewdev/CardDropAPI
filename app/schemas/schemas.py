@@ -21,6 +21,9 @@ class SessionResponse(BaseModel):
     max_players: int
     current_players: int = 0
     deck_type: str
+    ante: int = 0
+    games_played: int = 0
+    winner_nickname: Optional[str] = None
     created_at: datetime
     players: List["PlayerResponse"] = []
 
@@ -34,7 +37,11 @@ class PlayerResponse(BaseModel):
     nickname: str
     avatar: Optional[str] = None
     score: int
+    bet: int = 0
     is_ready: bool
+    folded: bool = False
+    connected: bool = False
+    cards_left: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -65,6 +72,23 @@ class PlayerCardResponse(BaseModel):
     id: int
     card: CardResponse
     hand_order: Optional[int] = None
+    player_id: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoundResponse(BaseModel):
+    id: int
+    round_number: int
+    dealer_id: Optional[int] = None
+    current_turn_player_id: Optional[int] = None
+    leader_player_id: Optional[int] = None
+    current_power: Optional[int] = None
+    is_tiebreak: bool = False
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    actions: List["RoundActionResponse"] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -102,6 +126,12 @@ class GameStatePayload(BaseModel):
     session_status: str
     round_number: int
     current_player_id: Optional[int] = None
+    leader_player_id: Optional[int] = None
+    current_power: Optional[int] = None
+    is_tiebreak: bool = False
+    ante: int = 0
+    games_played: int = 0
+    winner_nickname: Optional[str] = None
     player: PlayerResponse
     my_cards: List[PlayerCardResponse]
     other_players: List[PlayerResponse]
@@ -122,6 +152,18 @@ class WSReady(BaseModel):
     player_id: int
 
 
+class WSStart(BaseModel):
+    """Клиент начинает партию. ante — ставка, которую он вносит в банк"""
+    action: str = "start"
+    ante: Optional[int] = Field(default=None, ge=1, le=10000)
+
+
+class WSSetBet(BaseModel):
+    """Клиент меняет свою ставку до старта партии"""
+    action: str = "set_bet"
+    bet: int = Field(..., ge=1, le=10000)
+
+
 class WSPlayCard(BaseModel):
     """Клиент играет карту"""
     action: str = "play_card"
@@ -131,8 +173,15 @@ class WSPlayCard(BaseModel):
 
 
 class WSPass(BaseModel):
-    """Клиент пасует"""
+    """Клиент сбрасывает карты (сдаётся)"""
     action: str = "pass"
+    player_id: int
+    client_action_id: str = Field(default_factory=lambda: str(uuid4()))
+
+
+class WSFold(BaseModel):
+    """Клиент сбрасывает карты (сдаётся) — явное имя действия"""
+    action: str = "fold"
     player_id: int
     client_action_id: str = Field(default_factory=lambda: str(uuid4()))
 
