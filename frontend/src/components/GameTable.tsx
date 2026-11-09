@@ -9,7 +9,7 @@ interface GameTableProps {
   onDisconnect: () => void;
 }
 
-export function GameTable({ state, onReady, onPlayCard, onDisconnect }: GameTableProps) {
+export function GameTable({ state, onPlayCard, onDisconnect }: GameTableProps) {
   const myPlayer = state.player;
   const isMyTurn = state.current_player_id === myPlayer.id;
   const myCards = state.my_cards;

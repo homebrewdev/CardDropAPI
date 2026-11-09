@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 interface LobbyProps {
-  onCreate: (name: string, maxPlayers: number) => void;
+  onCreate: (name: string, maxPlayers: number, nickname: string) => void;
   onJoin: (code: string, nickname: string) => void;
   sessions: { id: number; name: string; join_code: string }[];
 }
@@ -11,8 +11,8 @@ export function Lobby({ onCreate, onJoin }: LobbyProps) {
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim()) return;
-    onCreate(form.name, form.maxPlayers);
+    if (!form.name.trim() || !form.nickname.trim()) return;
+    onCreate(form.name, form.maxPlayers, form.nickname);
   }
 
   function handleJoin(e: React.FormEvent) {
@@ -34,6 +34,13 @@ export function Lobby({ onCreate, onJoin }: LobbyProps) {
           value={form.name}
           maxLength={100}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
+        <input
+          type="text"
+          placeholder="Никнейм"
+          value={form.nickname}
+          maxLength={30}
+          onChange={(e) => setForm({ ...form, nickname: e.target.value })}
         />
         <label>
           Игроков:

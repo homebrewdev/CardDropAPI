@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:8000/api";
+// Относительный URL — запросы идут через Vite-прокси (vite.config.ts),
+// поэтому CORS в разработке не нужен
+const API_URL = "/api";
 
 export async function createSession(name: string, maxPlayers: number = 4) {
   const res = await fetch(`${API_URL}/sessions`, {

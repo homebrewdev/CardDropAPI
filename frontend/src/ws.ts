@@ -7,9 +7,15 @@ export class GameSocket {
   private handlers: Set<MessageHandler> = new Set();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private url: string = "";
+  private lastJoinCode: string = "";
+  private lastNickname: string = "";
 
   connect(joinCode: string, nickname: string) {
-    this.url = `ws://localhost:8000/ws/join/${joinCode}?nickname=${encodeURIComponent(nickname)}`;
+    this.lastJoinCode = joinCode;
+    this.lastNickname = nickname;
+    // Относительный URL — Vite проксирует /ws к бэкенду (vite.config.ts)
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    this.url = `${proto}//${location.host}/ws/join/${joinCode}?nickname=${encodeURIComponent(nickname)}`;
 
     this.ws = new WebSocket(this.url);
 
@@ -59,7 +65,8 @@ export class GameSocket {
   private scheduleReconnect() {
     this.reconnectTimer = setTimeout(() => {
       console.log("[WS] Reconnecting...");
-      this.connect(this.url.split("/join/")[1]?.split("?")[0] ?? "", "");
+      // Переподключаемся с теми же кодом и ником (пустой ник сервер закрывает с 4000)
+      this.connect(this.lastJoinCode, this.lastNickname);
     }, 3000);
   }
 }

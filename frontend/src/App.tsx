@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { GameTable } from "./components/GameTable";
 import { Lobby } from "./components/Lobby";
-import type { Session, GameState, PlayerCard } from "./types";
+import type { Session, GameState, WSMessage } from "./types";
 import { gameSocket } from "./ws";
 
 type Screen = "lobby" | "waiting" | "playing";
@@ -9,7 +9,6 @@ type Screen = "lobby" | "waiting" | "playing";
 function App() {
   const [screen, setScreen] = useState<Screen>("lobby");
   const [session, setSession] = useState<Session | null>(null);
-  const [nickname, setNickname] = useState("");
   const [gameState, setGameState] = useState<GameState | null>(null);
 
   function onGameState(state: GameState) {
@@ -21,28 +20,36 @@ function App() {
     }
   }
 
-  function onSessionUpdate(s: Session) {
-    setSession(s);
+  // Сервер шлёт много типов сообщений (player_joined, round_started, error...),
+  // для отрисовки нужен только game_state
+  function handleWsMessage(msg: WSMessage) {
+    if (msg.type === "game_state") {
+      onGameState(msg as unknown as GameState);
+    }
   }
 
-  function createSession(name: string, maxPlayers: number) {
-    fetch("http://localhost:8000/api/sessions", {
+  function createSession(name: string, maxPlayers: number, nick: string) {
+    fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, max_players: maxPlayers }),
     })
-      .then((res) => res.json())
-      .then((s) => {
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((s: Session) => {
         setSession(s);
+        gameSocket.onMessage(handleWsMessage);
+        gameSocket.connect(s.join_code, nick);
         setScreen("waiting");
       })
       .catch((err) => alert("Ошибка: " + err.message));
   }
 
   function joinSession(joinCode: string, nick: string) {
-    setNickname(nick);
     // Подключаем WebSocket
-    gameSocket.onMessage(onGameState);
+    gameSocket.onMessage(handleWsMessage);
     gameSocket.connect(joinCode, nick);
     setScreen("waiting");
   }
@@ -51,7 +58,7 @@ function App() {
     gameSocket.send({ action: "ready", player_id: gameState?.player.id });
   }
 
-  function handlePlayCard(playerCardId: number, cardId: number) {
+  function handlePlayCard(_playerCardId: number, cardId: number) {
     gameSocket.send({
       action: "play_card",
       player_id: gameState?.player.id,
