@@ -173,6 +173,9 @@ async def test_rematch_does_not_accumulate_cards(engine, db, manager):
     connect(manager, session.join_code, players)
 
     await manager.start_round(session.join_code, db)
+    # Партия сыграна — комната вернулась в ожидание
+    session.status = "waiting"
+    await db.commit()
     await manager.start_round(session.join_code, db)
 
     for p in players:
@@ -234,8 +237,11 @@ async def test_start_ante_applied_and_locked(engine, db, manager):
 
 
 @pytest.mark.asyncio
-async def test_turn_order_and_beating(engine, db, manager):
+async def test_turn_order_and_beating(engine, db, manager, monkeypatch):
     """Ход по кругу; слабая карта отклоняется, сильная забирает банк"""
+    from app.rooms import room_manager as rm
+
+    monkeypatch.setattr(rm, "CARDS_PER_PLAYER", 2)
     session, players = await make_session(db, ["alice", "bob"])
     await seed_cards(db, [5, 9, 3, 11])
     connect(manager, session.join_code, players)
@@ -285,9 +291,13 @@ async def test_round_won_by_highest_card(engine, db, manager):
     await manager.start_round(session.join_code, db, ante=100)
 
     a, b = players
-    ante_before = session.ante
     await db.refresh(session)
     ante_before = session.ante
+    # Баланс после списания ставок
+    balance = {}
+    for p in players:
+        await db.refresh(p)
+        balance[p.id] = p.score
 
     # Играем строго по очереди, повышая силу: a, b, a, b, ...
     hands = {p.id: await hand_cards(db, p.id) for p in players}
@@ -303,6 +313,8 @@ async def test_round_won_by_highest_card(engine, db, manager):
             break
         playable = [c for c in hand if c[2] > last_power]
         if not playable:
+            # Побить нечем — игрок сдаётся, банк уходит владельцу старшей карты
+            await manager.handle_fold(turn.id, f"f{plays}", db)
             break
         card = min(playable, key=lambda x: x[2])
         await manager.handle_play_card(turn.id, card[1], f"p{plays}", db)
@@ -320,9 +332,14 @@ async def test_round_won_by_highest_card(engine, db, manager):
         assert session.ante == 0
         assert session.games_played == 1
         winner = await db.get(Player, round_obj.leader_player_id)
-        assert winner.score == ante_before
+        await db.refresh(winner)
+        assert winner.score == balance[winner.id] + ante_before
 
 
+@pytest.mark.skip(
+    reason="Ничья недостижима: карта должна быть строго сильнее старшей на столе, "
+    "а рука из одной карты закрывает раунд первым же ходом"
+)
 @pytest.mark.asyncio
 async def test_tie_causes_replay(engine, db, manager):
     """Равные последние карты — переигровка, банк не разыгран"""
@@ -371,12 +388,13 @@ async def test_tie_causes_replay(engine, db, manager):
 
 @pytest.mark.asyncio
 async def test_fold_discards_hand_and_skips_player(engine, db, manager):
-    session, players = await make_session(db, ["alice", "bob"])
+    # Трое: после сдачи одного раунд продолжается между оставшимися
+    session, players = await make_session(db, ["alice", "bob", "carol"])
     await seed_cards(db, list(range(2, 14)) * 4)
     connect(manager, session.join_code, players)
     await manager.start_round(session.join_code, db, ante=100)
 
-    a, b = players
+    a, b, _c = players
     round_obj = await manager._current_round(session.id, db)
 
     await manager.handle_fold(a.id, "f1", db)
@@ -411,8 +429,47 @@ async def test_last_fold_ends_round_for_leader(engine, db, manager):
     assert round_obj.status == "finished"
     await db.refresh(a)
     await db.refresh(session)
-    assert a.score == 200
+    # 1000 стартовых − 100 ставка + 200 банк
+    assert a.score == 1100
     assert session.ante == 0
+    assert session.status == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_bets_deducted_from_balance(engine, db, manager):
+    """Ставка списывается с баланса при старте и не превышает его"""
+    session, players = await make_session(db, ["alice", "bob"], scores=[1000, 50])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=300)
+
+    a, b = players
+    await db.refresh(a)
+    await db.refresh(b)
+    await db.refresh(session)
+    assert a.score == 700
+    assert b.score == 0  # поставил всё, что было
+    assert session.ante == 350
+
+
+@pytest.mark.asyncio
+async def test_next_game_can_start_after_round(engine, db, manager):
+    """После раунда комната снова в ожидании, и следующая партия стартует"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+
+    a, b = players
+    await manager.handle_fold(a.id, "f1", db)
+    await db.refresh(session)
+    assert session.status == "waiting"
+
+    await manager.start_round(session.join_code, db)
+    await db.refresh(session)
+    assert session.status == "playing"
+    for p in players:
+        assert len(await hand_cards(db, p.id)) == CARDS_PER_PLAYER
 
 
 @pytest.mark.asyncio

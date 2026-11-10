@@ -61,7 +61,8 @@ class Player(Base):
     )
     nickname: Mapped[str] = mapped_column(String(30), nullable=False)
     avatar: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Баланс игрока. Стартовый капитал ненулевой: игроки с нулём в партию не допускаются
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
     # Ставка игрока в текущей партии (анте). Меняется только до старта партии:
     # повышение банка после начала игры запрещено правилами.
     bet: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

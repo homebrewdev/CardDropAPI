@@ -5,10 +5,10 @@
 }
 
 :root {
-  --bg-dark: #0f1923;
+  --bg-dark: #0b2416;
   --bg-table: #1a6b3c;
   --bg-card: #f5f5f0;
-  --bg-panel: #1e2d3d;
+  --bg-panel: #14402a;
   --text: #e0e0e0;
   --accent: #e8a838;
   --primary: #2563eb;
@@ -16,6 +16,23 @@
   --red-card: #c0392b;
   --black-card: #1a1a2e;
   --radius: 10px;
+}
+
+/* Прежняя (синяя) тема — включается переключателем */
+:root[data-theme="blue"] {
+  --bg-dark: #0f1923;
+  --bg-panel: #1e2d3d;
+}
+
+.btn-theme {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 8px 14px;
+  z-index: 100;
 }
 
 body {
@@ -374,4 +391,126 @@ body {
   .card-value { font-size: 1rem; }
   .card-suit { font-size: 1.1rem; }
   .my-hand { gap: 4px; }
+}
+
+/* ====== Комната ожидания ====== */
+.waiting-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.player-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.player-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.25);
+}
+
+.player-list li.offline {
+  opacity: 0.5;
+}
+
+.pl-stats {
+  opacity: 0.8;
+  font-size: 0.9rem;
+}
+
+.bet-row,
+.button-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.bet-row input {
+  width: 110px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  background: var(--bg-dark);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.result-banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: rgba(232,168,56,0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ====== Стол ====== */
+.table-info {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.opponent.current {
+  outline: 2px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.opponent.folded,
+.opponent.offline {
+  opacity: 0.45;
+}
+
+.cards-left {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.my-hand .unplayable {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.my-hand .unplayable .card {
+  pointer-events: none;
+}
+
+.btn-fold {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ====== Уведомления ====== */
+.notice {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }

@@ -81,13 +81,7 @@ class RoomManager:
             conn = RoomConnection(player.id, join_code, websocket)
             self.rooms[join_code][player.id] = conn
             self._player_to_room[player.id] = conn
-
-            await db.execute(
-                update(Session)
-                .where(Session.id == player.session_id)
-                .values(current_players=len(self.rooms[join_code]))
-            )
-            await db.commit()
+            # current_players в БД не хранится: API считает его по списку игроков
 
             await self._broadcast(
                 join_code,
@@ -123,13 +117,6 @@ class RoomManager:
                     del self.rooms[join_code]
             self._player_to_room.pop(player_id, None)
             self._processed_actions.pop(player_id, None)
-
-            await db.execute(
-                update(Session)
-                .where(Session.join_code == join_code)
-                .values(current_players=len(self.rooms.get(join_code, {})))
-            )
-            await db.commit()
 
             result = await db.execute(
                 select(Session).where(Session.join_code == join_code)
@@ -169,6 +156,7 @@ class RoomManager:
                 await conn.websocket.send_json(data)
                 return True
             except Exception:
+                logger.exception(f"Failed to send to player {player_id}")
                 return False
         return False
 
@@ -318,9 +306,12 @@ class RoomManager:
                 await db.execute(
                     update(Player).where(Player.id == players[0].id).values(bet=ante)
                 )
+        # Ставка списывается с баланса и уходит в банк; больше баланса поставить нельзя
         for p in players:
             if not p.bet:
                 p.bet = DEFAULT_ANTE
+            p.bet = min(p.bet, p.score)
+            p.score -= p.bet
         await db.commit()
 
         # Банк партии фиксируется: повышать его после старта нельзя
@@ -606,6 +597,13 @@ class RoomManager:
         players = result.scalars().all()
         connected = set(self._connected_ids(join_code))
         waiting = [p for p in players if not p.folded and p.id in connected]
+        if len(waiting) == 1:
+            # Остальные сдались или ушли — последний оставшийся забирает банк
+            round_obj.leader_player_id = waiting[0].id
+            round_obj.is_closed = 1
+            await db.commit()
+            await self._resolve_round(session, round_obj, db)
+            return
         if waiting:
             # Кто-то ещё может ходить — передаём ход первому из ожидающих,
             # если текущий ход числится за выбывшим
@@ -718,6 +716,11 @@ class RoomManager:
 
         session.ante = 0
         session.games_played += 1
+        # Партия сыграна — комната снова ждёт старта следующей
+        session.status = "waiting"
+        for p in players:
+            p.folded = 0
+            p.is_ready = 0
         await db.commit()
 
         await self._broadcast(
@@ -895,6 +898,8 @@ class RoomManager:
             "type": "game_state",
             "session_id": session.id,
             "session_status": session.status,
+            "join_code": session.join_code,
+            "max_players": session.max_players,
             "round_number": round_obj.round_number if round_obj else 0,
             "current_player_id": round_obj.current_turn_player_id if round_obj else None,
             "leader_player_id": round_obj.leader_player_id if round_obj else None,
@@ -904,9 +909,10 @@ class RoomManager:
             "games_played": session.games_played,
             "winner_nickname": session.winner_nickname,
             "player": my_payload,
-            "my_cards": my_cards,
+            # pydantic-модели → dict, иначе websocket.send_json не сериализует снапшот
+            "my_cards": [pc.model_dump(mode="json") for pc in my_cards],
             "other_players": other_payload,
-            "table_cards": table_cards,
+            "table_cards": [pc.model_dump(mode="json") for pc in table_cards],
             "round_status": round_obj.status if round_obj else "pending",
             "timestamp": utcnow().isoformat(),
         }

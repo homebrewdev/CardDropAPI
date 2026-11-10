@@ -64,10 +64,6 @@ async def websocket_join(
                 await websocket.close(code=4005, reason="Session already started")
                 return
 
-            if len(session_obj.players) >= session_obj.max_players:
-                await websocket.close(code=4006, reason="Session is full")
-                return
-
             result = await db.execute(
                 select(Player).where(
                     Player.session_id == session_obj.id,
@@ -75,6 +71,11 @@ async def websocket_join(
                 )
             )
             player = result.scalar_one_or_none()
+
+            # Лимит мест проверяем только для новых игроков: вернувшийся занимает своё место
+            if not player and len(session_obj.players) >= session_obj.max_players:
+                await websocket.close(code=4006, reason="Session is full")
+                return
 
             if not player:
                 player = Player(session_id=session_obj.id, nickname=nickname)
@@ -107,6 +108,7 @@ async def websocket_join(
                             ready_data.player_id, db
                         )
                         await room_manager.broadcast_all(player.id, result)
+                        await room_manager._broadcast_states(join_code, db)
                         break
 
                 elif action == "set_bet":
@@ -115,6 +117,7 @@ async def websocket_join(
                         await room_manager.handle_set_bet(
                             player.id, bet_data.bet, db
                         )
+                        await room_manager._broadcast_states(join_code, db)
                         break
 
                 elif action == "start":

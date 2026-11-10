@@ -18,6 +18,10 @@ export interface Player {
   avatar: string | null;
   score: number;
   is_ready: boolean;
+  bet: number;
+  folded: boolean;
+  connected: boolean;
+  cards_left: number;
 }
 
 export interface Session {
@@ -35,9 +39,17 @@ export interface Session {
 export interface GameState {
   type: "game_state";
   session_id: number;
-  session_status: string;
+  session_status: "waiting" | "playing" | "finished" | "cancelled";
+  join_code: string;
+  max_players: number;
   round_number: number;
   current_player_id: number | null;
+  leader_player_id: number | null;
+  current_power: number | null;
+  is_tiebreak: boolean;
+  ante: number;
+  games_played: number;
+  winner_nickname: string | null;
   player: Player;
   my_cards: PlayerCard[];
   other_players: Player[];

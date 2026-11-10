@@ -31,7 +31,7 @@ CREATE TABLE `players` (
     `session_id`  BIGINT UNSIGNED NOT NULL,
     `nickname`    VARCHAR(30)     NOT NULL,
     `avatar`      VARCHAR(255)    DEFAULT NULL,
-    `score`       INT             NOT NULL DEFAULT 0,
+    `score`       INT             NOT NULL DEFAULT 1000,
     `is_ready`    TINYINT(1)      NOT NULL DEFAULT 0,
     `joined_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY `idx_players_session` (`session_id`),

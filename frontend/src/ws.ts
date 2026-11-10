@@ -11,19 +11,22 @@ export class GameSocket {
   private lastNickname: string = "";
 
   connect(joinCode: string, nickname: string) {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.lastJoinCode = joinCode;
     this.lastNickname = nickname;
     // Относительный URL — Vite проксирует /ws к бэкенду (vite.config.ts)
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     this.url = `${proto}//${location.host}/ws/join/${joinCode}?nickname=${encodeURIComponent(nickname)}`;
 
-    this.ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
       console.log("[WS] Connected");
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as WSMessage;
         this.handlers.forEach((h) => h(data));
@@ -32,14 +35,23 @@ export class GameSocket {
       }
     };
 
-    this.ws.onclose = (event) => {
+    ws.onclose = (event) => {
+      // Закрылся уже заменённый сокет — игнорируем
+      if (this.ws !== ws) return;
       console.log(`[WS] Closed: ${event.code} ${event.reason}`);
+      if (event.code >= 4000 && event.code < 5000) {
+        // Сервер отказал (нет комнаты, партия идёт, мест нет…) — переподключение бессмысленно
+        this.handlers.forEach((h) =>
+          h({ type: "connection_closed", code: event.code, reason: event.reason })
+        );
+        return;
+      }
       if (event.code !== 1000) {
         this.scheduleReconnect();
       }
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
       console.error("[WS] Error");
     };
   }
@@ -57,9 +69,11 @@ export class GameSocket {
 
   disconnect() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.handlers.clear();
-    this.ws?.close(1000, "Client disconnect");
+    const ws = this.ws;
     this.ws = null;
+    ws?.close(1000, "Client disconnect");
   }
 
   private scheduleReconnect() {
