@@ -15,10 +15,16 @@ Redis       →  Горячее состояние (опционально)
 
 ### 1. Бэкенд
 
+Всё запускается из виртуального окружения `.venv`. Системный Python не подойдёт:
+нужна SQLAlchemy 2.x.
+
 ```bash
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
+python -m venv .venv                     # один раз
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 ```
+
+(Linux/macOS: `.venv/bin/python` вместо `.venv\Scripts\python`.)
 
 Сервер: http://localhost:8000  
 Swagger: http://localhost:8000/docs
@@ -36,7 +42,7 @@ npm run dev
 ### 3. Тесты
 
 ```bash
-python -m pytest tests/ -v
+.venv\Scripts\python -m pytest tests/ -v
 ```
 
 ## API
