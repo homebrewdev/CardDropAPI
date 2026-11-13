@@ -19,7 +19,7 @@ CREATE TABLE `sessions` (
     `created_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                                ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY `uk_sessions_name` (`name`),
+    KEY `idx_sessions_name` (`name`),
     CHECK (`max_players` BETWEEN 2 AND 4)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

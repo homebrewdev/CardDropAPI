@@ -5,10 +5,13 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict
 
 from fastapi import WebSocket
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Session, Player, Card, PlayerCard, Round, RoundAction
+from app.models.models import (
+    Session, Player, Card, Deck, PlayerCard, Round, RoundAction,
+)
+from app.rooms.deck import build_session_deck
 from app.schemas.schemas import (
     PlayerCardResponse,
     CardResponse,
@@ -57,13 +60,16 @@ class RoomConnection:
 class RoomManager:
     """Управление комнатами в памяти + операции с БД"""
 
-    def __init__(self):
+    def __init__(self, rng: Optional[random.Random] = None):
         # join_code -> {player_id: RoomConnection}
         self.rooms: Dict[str, Dict[int, RoomConnection]] = {}
         # player_id -> RoomConnection (для быстрого поиска)
         self._player_to_room: Dict[int, RoomConnection] = {}
         # player_id -> uuid последнего обработанного действия (идемпотентность)
         self._processed_actions: Dict[int, str] = {}
+        # Источник случайности для тасовки колоды. В тестах можно передать
+        # random.Random(seed), чтобы раздача была воспроизводимой
+        self._rng = rng or random.Random()
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -100,8 +106,9 @@ class RoomManager:
                 exclude=player.id,
             )
 
-            state = await self._build_state(join_code, player.id, db)
-            await websocket.send_json(state)
+            # Снапшот всем, а не только вошедшему: иначе первый игрок
+            # не увидит второго, пока не случится другой игровой event
+            await self._broadcast_states(join_code, db)
 
             return conn
 
@@ -169,6 +176,12 @@ class RoomManager:
                 await conn.websocket.send_json(data)
                 return True
             except Exception:
+                # Раньше ошибка проглатывалась молча и клиент оставался
+                # без состояния (например, при несериализуемом payload)
+                logger.warning(
+                    "Failed to send %r to player %s",
+                    data.get("type"), player_id, exc_info=True,
+                )
                 return False
         return False
 
@@ -219,6 +232,33 @@ class RoomManager:
             )
         )
         return len(result.scalars().all())
+
+    async def _hand_sizes(self, session_id: int, db: AsyncSession) -> Dict[int, int]:
+        """player_id -> число несыгранных карт в руке"""
+        result = await db.execute(
+            select(PlayerCard.player_id, func.count())
+            .join(Player, Player.id == PlayerCard.player_id)
+            .where(
+                Player.session_id == session_id,
+                PlayerCard.played_at.is_(None),
+            )
+            .group_by(PlayerCard.player_id)
+        )
+        return {pid: count for pid, count in result.all()}
+
+    async def _max_powers(self, session_id: int, db: AsyncSession) -> Dict[int, int]:
+        """player_id -> сила старшей карты в руке (0, если карт нет)"""
+        result = await db.execute(
+            select(PlayerCard.player_id, func.max(Card.power))
+            .join(Card, PlayerCard.card_id == Card.id)
+            .join(Player, Player.id == PlayerCard.player_id)
+            .where(
+                Player.session_id == session_id,
+                PlayerCard.played_at.is_(None),
+            )
+            .group_by(PlayerCard.player_id)
+        )
+        return {pid: power or 0 for pid, power in result.all()}
 
     # ------------------------------------------------------------------
     # Ставки и старт партии
@@ -280,12 +320,27 @@ class RoomManager:
         if not session:
             raise GameActionError("Session not found", "not_found")
 
-        if session.status == "playing":
+        if session.status == "playing" and ante is not None:
+            # Банк зафиксирован на всю партию; новая раздача без смены
+            # ставки разрешена (следующий раунд)
             raise GameActionError(
                 "Нельзя повышать банк: партия уже началась", "bank_locked"
             )
         if session.status == "cancelled":
             raise GameActionError("Сессия отменена", "invalid_state")
+
+        if session.status == "finished":
+            # Новая игра в той же комнате: обнуляем банкроллы прошлой партии
+            await db.execute(
+                update(Player)
+                .where(Player.session_id == session.id)
+                .values(score=0, bet=0, folded=0, is_ready=1)
+            )
+            session.ante = 0
+            session.winner_nickname = None
+            session.status = "waiting"
+            await db.commit()
+            await db.refresh(session)
 
         connected = self._connected_ids(join_code)
         if len(connected) < MIN_PLAYERS:
@@ -304,7 +359,11 @@ class RoomManager:
             .where(Player.session_id == session.id, Player.id.in_(connected))
             .order_by(Player.id)
         )
-        players = [p for p in result.scalars().all() if p.score != 0]
+        candidates = list(result.scalars().all())
+        # В первой партии у всех score = 0 — играют все подключённые.
+        # Как только банкролл сформирован, игроки без средств выбывают.
+        has_money = any(p.score != 0 for p in candidates)
+        players = [p for p in candidates if p.score != 0] if has_money else candidates
         if len(players) < MIN_PLAYERS:
             raise GameActionError("Игроков с средствами меньше двух", "not_enough_funds")
 
@@ -358,9 +417,15 @@ class RoomManager:
         await db.commit()
         await db.refresh(new_round)
 
-        # Сброс предыдущих рук и флагов сдачи, иначе карты накапливаются между партиями
+        # Сброс предыдущих рук и флагов сдачи, иначе карты накапливаются между партиями.
+        # Только карты этой сессии: без join удалялись бы руки всех комнат.
         result = await db.execute(
-            select(PlayerCard).where(PlayerCard.played_at.is_(None))
+            select(PlayerCard)
+            .join(Player, Player.id == PlayerCard.player_id)
+            .where(
+                Player.session_id == session.id,
+                PlayerCard.played_at.is_(None),
+            )
         )
         for pc in result.scalars().all():
             await db.delete(pc)
@@ -368,23 +433,38 @@ class RoomManager:
             p.folded = 0
         await db.commit()
 
-        result = await db.execute(select(Card).order_by(Card.id))
-        cards = list(result.scalars().all())
-        if len(cards) < CARDS_PER_PLAYER * len(players):
+        # Колода сессии. В первой партии берём колоду, собранную при
+        # создании комнаты; в следующих раундах пересобираем и тасуем заново.
+        result = await db.execute(
+            select(Deck)
+            .where(Deck.session_id == session.id)
+            .order_by(Deck.position)
+        )
+        deck_rows = list(result.scalars().all())
+        if last_round is not None or not deck_rows:
+            await db.execute(delete(Deck).where(Deck.session_id == session.id))
+            await db.commit()
+            deck_rows = await build_session_deck(session.id, db, self._rng)
+            await db.commit()
+
+        # Раздаём по 13 карт, но не больше, чем позволяет колода:
+        # иначе тестовая/урезанная колода валит старт партии
+        cards_per_player = min(CARDS_PER_PLAYER, len(deck_rows) // len(players))
+        if cards_per_player < 1:
             raise GameActionError(
                 "В базе нет карт. Загрузи справочник: mysql < db_seed_cards.sql",
                 "empty_deck",
             )
-        random.shuffle(cards)
 
         card_idx = 0
-        for player in players:
-            for order in range(CARDS_PER_PLAYER):
-                card = cards[card_idx]
+        for order in range(cards_per_player):
+            for player in players:
+                deck_row = deck_rows[card_idx]
                 db.add(
                     PlayerCard(
                         player_id=player.id,
-                        card_id=card.id,
+                        deck_id=deck_row.id,
+                        card_id=deck_row.card_id,
                         hand_order=order,
                     )
                 )
@@ -486,12 +566,18 @@ class RoomManager:
         self._mark_action(player_id, client_action_id)
         await db.commit()
 
-        if await self._hand_size(player_id, db) == 0:
-            round_obj.is_closed = 1
-            await db.commit()
-            await self._resolve_round(session, round_obj, db)
-        else:
-            await self._advance_turn(session, round_obj, db, actor_id=player_id)
+        # Раунд заканчивается, когда карту некому перебить, либо когда
+        # у сыгравшего закончились карты
+        finished = await self._finish_if_no_beat(
+            session, round_obj, db, actor_id=player_id
+        )
+        if not finished:
+            if await self._hand_size(player_id, db) == 0:
+                round_obj.is_closed = 1
+                await db.commit()
+                await self._resolve_round(session, round_obj, db)
+            else:
+                await self._advance_turn(session, round_obj, db, actor_id=player_id)
 
         await self._broadcast_states(session.join_code, db)
         return await self._build_state(session.join_code, player_id, db)
@@ -512,12 +598,14 @@ class RoomManager:
             return await self._build_state(session.join_code, player_id, db)
 
         session = await self._get_session_by_player(player_id, db)
+        # Раунд мог закончиться, пока запрос шёл по сети: сдача после
+        # завершения ничего не меняет, поэтому отвечаем снапшотом
         if session.status != "playing":
-            raise GameActionError("Партия не идёт", "invalid_state")
+            return await self._build_state(session.join_code, player_id, db)
 
         round_obj = await self._current_round(session.id, db)
         if not round_obj or round_obj.status != "active" or round_obj.is_closed:
-            raise GameActionError("Раунд не принимает сдачу", "invalid_state")
+            return await self._build_state(session.join_code, player_id, db)
 
         result = await db.execute(select(Player).where(Player.id == player_id))
         player = result.scalar_one_or_none()
@@ -567,28 +655,78 @@ class RoomManager:
     # Переход хода и завершение раунда
     # ------------------------------------------------------------------
 
-    async def _advance_turn(
+    async def _finish_if_no_beat(
         self, session: Session, round_obj: Round, db: AsyncSession, actor_id: int
-    ):
-        """Передать ход следующему игроку, который не сбросил карты"""
+    ) -> bool:
+        """Закрыть раунд, если последнюю карту некому перебить.
+
+        Возвращает True, если раунд уже завершён (банк разыгран или
+        назначена переигровка при равной старшей карте).
+        """
+        power = round_obj.current_power
+        if power is None or round_obj.is_tiebreak:
+            return False
+
         result = await db.execute(
             select(Player).where(Player.session_id == session.id).order_by(Player.id)
         )
         players = result.scalars().all()
-        folded = {p.id for p in players if p.folded}
-        eligible = [p.id for p in players if p.id not in folded]
-        if not eligible:
+        sizes = await self._hand_sizes(session.id, db)
+        best = await self._max_powers(session.id, db)
+
+        others = [
+            p.id
+            for p in players
+            if p.id != actor_id and not p.folded and sizes.get(p.id, 0) > 0
+        ]
+        if any(best.get(pid, 0) > power for pid in others):
+            return False
+
+        # Перебить некому — банк забирает владелец старшей карты
+        round_obj.is_closed = 1
+        await db.commit()
+        await self._resolve_round(session, round_obj, db)
+        return True
+
+    async def _advance_turn(
+        self, session: Session, round_obj: Round, db: AsyncSession, actor_id: int
+    ):
+        """Передать ход следующему игроку, который может и хочет ходить"""
+        result = await db.execute(
+            select(Player).where(Player.session_id == session.id).order_by(Player.id)
+        )
+        players = result.scalars().all()
+        sizes = await self._hand_sizes(session.id, db)
+        # Ходить может только тот, у кого есть карты в руке: игроки без
+        # средств не получают раздачу и не должны задерживать ход
+        with_cards = [
+            p.id for p in players if not p.folded and sizes.get(p.id, 0) > 0
+        ]
+        if not with_cards:
             round_obj.is_closed = 1
             await db.commit()
             await self._resolve_round(session, round_obj, db)
             return
 
+        allowed = set(with_cards)
+
+        # циклический обход по порядку id, начиная со следующего после актора
+        order = [p.id for p in players]
         try:
-            pos = eligible.index(actor_id)
+            pos = order.index(actor_id)
         except ValueError:
             pos = -1
-        round_obj.current_turn_player_id = eligible[(pos + 1) % len(eligible)]
+        for step in range(1, len(order) + 1):
+            pid = order[(pos + step) % len(order)]
+            if pid in allowed:
+                round_obj.current_turn_player_id = pid
+                await db.commit()
+                return
+
+        # Никто не может ходить — раунд закрывается, банк забирает лидер
+        round_obj.is_closed = 1
         await db.commit()
+        await self._resolve_round(session, round_obj, db)
 
     async def _advance_if_stalled(self, join_code: str, db: AsyncSession):
         """После сдачи/выхода: если ходить некому, закрыть и рассчитать раунд"""
@@ -605,13 +743,26 @@ class RoomManager:
         )
         players = result.scalars().all()
         connected = set(self._connected_ids(join_code))
-        waiting = [p for p in players if not p.folded and p.id in connected]
-        if waiting:
+        sizes = await self._hand_sizes(session.id, db)
+        waiting = [
+            p
+            for p in players
+            if not p.folded and p.id in connected and sizes.get(p.id, 0) > 0
+        ]
+        if len(waiting) > 1:
             # Кто-то ещё может ходить — передаём ход первому из ожидающих,
             # если текущий ход числится за выбывшим
             if round_obj.current_turn_player_id not in {p.id for p in waiting}:
                 round_obj.current_turn_player_id = waiting[0].id
                 await db.commit()
+            return
+
+        # Остался один игрок с картами. Если на столе уже есть старшая
+        # карта (лидер), все остальные сдались — банк забирает лидер.
+        # Если ходов ещё не было, оставшийся просто продолжает игру.
+        if len(waiting) == 1 and round_obj.leader_player_id is None:
+            round_obj.current_turn_player_id = waiting[0].id
+            await db.commit()
             return
 
         round_obj.is_closed = 1
@@ -774,6 +925,10 @@ class RoomManager:
     # Рассылка и снапшот состояния
     # ------------------------------------------------------------------
 
+    async def broadcast_states(self, join_code: str, db: AsyncSession):
+        """Публичная рассылка персональных снапшотов всем в комнате"""
+        await self._broadcast_states(join_code, db)
+
     async def _broadcast_states(self, join_code: str, db: AsyncSession):
         """Отправить персональный снапшот каждому подключённому игроку"""
         for pid in list(self.rooms.get(join_code, {}).keys()):
@@ -818,6 +973,8 @@ class RoomManager:
             )
             .order_by(PlayerCard.hand_order)
         )
+        # model_dump: в WS уходит обычный JSON, Pydantic-модели json.dumps
+        # не сериализует, и отправка падала без следа
         my_cards = [
             PlayerCardResponse(
                 id=pc.id,
@@ -825,7 +982,7 @@ class RoomManager:
                     id=c.id, name=c.name, suit=c.suit, value=c.value, power=c.power
                 ),
                 hand_order=pc.hand_order,
-            )
+            ).model_dump()
             for pc, c in result.all()
         ]
 
@@ -865,7 +1022,7 @@ class RoomManager:
                         ),
                         hand_order=pc.hand_order,
                         player_id=act.player_id,
-                    )
+                    ).model_dump()
                 )
 
         connected = set(self._connected_ids(join_code))
@@ -894,6 +1051,16 @@ class RoomManager:
         return {
             "type": "game_state",
             "session_id": session.id,
+            # Комната целиком: игрок, вошедший по коду, не делал REST-запроса
+            # создания сессии и иначе не знает ни join_code, ни лимита игроков
+            "session": {
+                "id": session.id,
+                "name": session.name,
+                "join_code": session.join_code,
+                "status": session.status,
+                "max_players": session.max_players,
+                "current_players": len(connected),
+            },
             "session_status": session.status,
             "round_number": round_obj.round_number if round_obj else 0,
             "current_player_id": round_obj.current_turn_player_id if round_obj else None,

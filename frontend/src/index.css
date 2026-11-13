@@ -375,3 +375,236 @@ body {
   .card-suit { font-size: 1.1rem; }
   .my-hand { gap: 4px; }
 }
+
+/* ====== Banners ====== */
+.banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-size: 0.95rem;
+}
+
+.banner-error {
+  background: #7f1d1d;
+  border: 1px solid #b91c1c;
+  color: #fee2e2;
+}
+
+.banner-info {
+  background: #1e3a5f;
+  border: 1px solid #2563eb;
+  color: #dbeafe;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ====== Waiting room ====== */
+.waiting-box {
+  max-width: 460px;
+}
+
+.join-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.2rem;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+
+.players-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.players-list li.offline {
+  opacity: 0.5;
+}
+
+.bank-line {
+  margin: 8px 0 16px;
+}
+
+.waiting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+.bet-form {
+  display: flex;
+  gap: 6px;
+}
+
+.bet-form input {
+  width: 90px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: var(--bg-dark);
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ====== Players ====== */
+.player-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.cards-left {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.opponent.active-turn {
+  box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
+  border: 1px solid rgba(74, 222, 128, 0.6);
+}
+
+.opponent.offline {
+  opacity: 0.5;
+}
+
+.opponent.folded {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.turn-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: pulse 1.5s infinite;
+}
+
+/* ====== Table ====== */
+.table-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.tiebreak-note {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.played-cards {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.played-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.played-owner {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-leader {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px rgba(232, 168, 56, 0.8);
+}
+
+.card-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.card-disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.game-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ====== Result ====== */
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  padding: 16px;
+}
+
+.result-box {
+  background: var(--bg-panel);
+  padding: 28px;
+  border-radius: var(--radius);
+  min-width: 300px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.result-box h2 {
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.result-box ul {
+  list-style: none;
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result-box li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-dark);
+  padding: 8px 12px;
+  border-radius: 6px;
+}

@@ -96,7 +96,21 @@ DB_NAME=cardgame
 REDIS_HOST=localhost
 REDIS_PORT=6379
 ALLOWED_ORIGINS=http://localhost:5173
+LOG_DIR=log                # папка для файлов card_api_log_дата_время.log
+LOG_LEVEL=INFO             # DEBUG | INFO | WARNING | ERROR
+LOG_TO_CONSOLE=true        # дублировать логи в stdout
 ```
+
+## Логи
+
+Каждый запуск сервера создаёт `log/card_api_log_ГГГГ-ММ-ДД_ЧЧ-ММ-СС.log`:
+
+| Логгер | Что пишет |
+|---|---|
+| `carddrop.access` | Каждая HTTP-операция: `[req-id] METHOD путь -> статус Xms ip=... body={...}` |
+| `app.ws.ws_handler` | WS-соединения: подключение, игрок, каждое действие, ошибки правил, отключение |
+| `app.api.sessions` | Создание сессий (id, name, join_code) |
+| `app.db` | Авто-колонки SQLite при старте |
 
 Для MySQL: `DB_DIALECT=mysql` + запустить `docker compose up -d mysql`.
 

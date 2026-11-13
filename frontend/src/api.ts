@@ -26,3 +26,12 @@ export async function getSession(sessionId: number) {
   if (!res.ok) throw new Error("Session not found");
   return res.json();
 }
+
+export async function getSessionByCode(joinCode: string) {
+  const res = await fetch(`${API_URL}/sessions/by-code/${encodeURIComponent(joinCode)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Комната не найдена" }));
+    throw new Error(err.detail || "Комната не найдена");
+  }
+  return res.json();
+}

@@ -52,17 +52,15 @@ async def test_list_sessions(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_session_name(client: AsyncClient):
+async def test_duplicate_session_name_allowed(client: AsyncClient):
+    """Название больше не уникально — можно создать несколько сессий с одинаковым именем."""
     name = _name()
-    await client.post(
-        "/api/sessions",
-        json={"name": name, "max_players": 4},
-    )
-    resp = await client.post(
-        "/api/sessions",
-        json={"name": name, "max_players": 4},
-    )
-    assert resp.status_code == 409
+    r1 = await client.post("/api/sessions", json={"name": name, "max_players": 4})
+    assert r1.status_code == 201
+    r2 = await client.post("/api/sessions", json={"name": name, "max_players": 4})
+    assert r2.status_code == 201
+    # join_code у каждой сессии свой
+    assert r1.json()["join_code"] != r2.json()["join_code"]
 
 
 @pytest.mark.asyncio

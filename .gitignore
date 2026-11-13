@@ -33,6 +33,7 @@ redis_data/
 
 # Logs
 *.log
+log/
 
 # OS
 .DS_Store

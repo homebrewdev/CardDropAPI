@@ -1,13 +1,18 @@
+import logging
 import string
 import random
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models.models import Session, Player
+from app.rooms.deck import build_session_deck
 from app.schemas.schemas import SessionCreate, SessionResponse, PlayerResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["rest"])
 
@@ -23,14 +28,10 @@ async def create_session(
     session_data: SessionCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Создать новую игровую сессию"""
-    # Проверяем уникальность имени
-    result = await db.execute(
-        select(Session).where(Session.name == session_data.name)
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Session name already exists")
+    """Создать новую игровую сессию
 
+    Название не уникально — идентификатором комнаты остаётся join_code.
+    """
     # Генерируем join_code
     join_code = generate_join_code()
     # Проверяем уникальность
@@ -49,8 +50,28 @@ async def create_session(
         deck_type=session_data.deck_type,
     )
     db.add(session)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Гонка при генерации join_code: два запроса получили один код
+        await db.rollback()
+        logger.warning("join_code collision for session name=%r", session_data.name)
+        raise HTTPException(status_code=409, detail="Не удалось создать игру — попробуй ещё раз")
     await db.refresh(session)
+
+    # Колода принадлежит сессии: тасуем её сразу при создании комнаты,
+    # при старте партии карты выдаются уже из неё
+    deck = await build_session_deck(session.id, db)
+    await db.commit()
+    if not deck:
+        logger.warning(
+            "Session %s created without a deck: cards catalog is empty", session.id
+        )
+
+    logger.info(
+        "Session created: id=%s name=%r join_code=%s max_players=%s deck=%s",
+        session.id, session.name, session.join_code, session.max_players, len(deck),
+    )
 
     return SessionResponse(
         id=session.id,
@@ -98,6 +119,47 @@ async def list_sessions(
         )
         for s in sessions
     ]
+
+
+@router.get("/sessions/by-code/{join_code}", response_model=SessionResponse)
+async def get_session_by_code(
+    join_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Сессия по коду комнаты — нужна игроку, который входит по коду"""
+    result = await db.execute(
+        select(Session).where(Session.join_code == join_code.upper())
+    )
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Комната с таким кодом не найдена")
+
+    return SessionResponse(
+        id=session.id,
+        name=session.name,
+        join_code=session.join_code,
+        status=session.status,
+        max_players=session.max_players,
+        current_players=len(session.players),
+        deck_type=session.deck_type,
+        ante=session.ante,
+        games_played=session.games_played,
+        winner_nickname=session.winner_nickname,
+        created_at=session.created_at,
+        players=[
+            PlayerResponse(
+                id=p.id,
+                nickname=p.nickname,
+                avatar=p.avatar,
+                score=p.score,
+                bet=p.bet,
+                is_ready=bool(p.is_ready),
+                folded=bool(p.folded),
+            )
+            for p in session.players
+        ],
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
