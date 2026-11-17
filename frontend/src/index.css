@@ -5,10 +5,10 @@
 }
 
 :root {
-  --bg-dark: #0b2416;
+  --bg-dark: #0f1923;
   --bg-table: #1a6b3c;
   --bg-card: #f5f5f0;
-  --bg-panel: #14402a;
+  --bg-panel: #1e2d3d;
   --text: #e0e0e0;
   --accent: #e8a838;
   --primary: #2563eb;
@@ -16,23 +16,6 @@
   --red-card: #c0392b;
   --black-card: #1a1a2e;
   --radius: 10px;
-}
-
-/* Прежняя (синяя) тема — включается переключателем */
-:root[data-theme="blue"] {
-  --bg-dark: #0f1923;
-  --bg-panel: #1e2d3d;
-}
-
-.btn-theme {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  background: var(--bg-panel);
-  color: var(--text);
-  border: 1px solid rgba(255,255,255,0.2);
-  padding: 8px 14px;
-  z-index: 100;
 }
 
 body {
@@ -393,124 +376,235 @@ body {
   .my-hand { gap: 4px; }
 }
 
-/* ====== Комната ожидания ====== */
-.waiting-box {
+/* ====== Banners ====== */
+.banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-size: 0.95rem;
+}
+
+.banner-error {
+  background: #7f1d1d;
+  border: 1px solid #b91c1c;
+  color: #fee2e2;
+}
+
+.banner-info {
+  background: #1e3a5f;
+  border: 1px solid #2563eb;
+  color: #dbeafe;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ====== Waiting room ====== */
+.waiting-box {
+  max-width: 460px;
+}
+
+.join-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.2rem;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+
+.players-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.player-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  text-align: left;
-}
-
-.player-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: rgba(0,0,0,0.25);
-}
-
-.player-list li.offline {
+.players-list li.offline {
   opacity: 0.5;
 }
 
-.pl-stats {
-  opacity: 0.8;
-  font-size: 0.9rem;
+.bank-line {
+  margin: 8px 0 16px;
 }
 
-.bet-row,
-.button-row {
+.waiting-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+.bet-form {
+  display: flex;
+  gap: 6px;
+}
+
+.bet-form input {
+  width: 90px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: var(--bg-dark);
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ====== Players ====== */
+.player-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.cards-left {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.opponent.active-turn {
+  box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
+  border: 1px solid rgba(74, 222, 128, 0.6);
+}
+
+.opponent.offline {
+  opacity: 0.5;
+}
+
+.opponent.folded {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.turn-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: pulse 1.5s infinite;
+}
+
+/* ====== Table ====== */
+.table-info {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
 }
 
-.bet-row input {
-  width: 110px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 6px;
-  background: var(--bg-dark);
-  color: var(--text);
-  font-size: 1rem;
-}
-
-.result-banner {
-  padding: 10px 14px;
-  border-radius: 6px;
-  background: rgba(232,168,56,0.15);
-  border: 1px solid var(--accent);
+.tiebreak-note {
   color: var(--accent);
   font-weight: 600;
 }
 
+.played-cards {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.played-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.played-owner {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-leader {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px rgba(232, 168, 56, 0.8);
+}
+
+.card-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.card-disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.game-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .hint {
   font-size: 0.85rem;
-  color: var(--danger);
+  color: rgba(255, 255, 255, 0.6);
 }
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* ====== Стол ====== */
-.table-info {
-  display: flex;
-  gap: 20px;
-  justify-content: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.opponent.current {
-  outline: 2px solid var(--accent);
-  border-radius: var(--radius);
-}
-
-.opponent.folded,
-.opponent.offline {
-  opacity: 0.45;
-}
-
-.cards-left {
-  font-size: 0.85rem;
-  opacity: 0.8;
-}
-
-.my-hand .unplayable {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.my-hand .unplayable .card {
-  pointer-events: none;
-}
-
-.btn-fold {
-  background: var(--danger);
-  color: #fff;
-}
-
-/* ====== Уведомления ====== */
-.notice {
+/* ====== Result ====== */
+.result-overlay {
   position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: calc(100vw - 32px);
-  padding: 12px 20px;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  padding: 16px;
+}
+
+.result-box {
+  background: var(--bg-panel);
+  padding: 28px;
   border-radius: var(--radius);
-  background: rgba(0,0,0,0.85);
-  color: #fff;
-  z-index: 200;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  min-width: 300px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.result-box h2 {
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.result-box ul {
+  list-style: none;
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result-box li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-dark);
+  padding: 8px 12px;
+  border-radius: 6px;
 }

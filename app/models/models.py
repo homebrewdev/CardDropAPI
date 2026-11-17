@@ -22,7 +22,8 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    # Название не уникально: идентификатором комнаты является join_code
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
     join_code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(
         Enum("waiting", "playing", "finished", "cancelled", name="session_status"),
@@ -30,6 +31,8 @@ class Session(Base):
         default="waiting",
     )
     max_players: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=4)
+    # Денормализованный счётчик подключённых игроков: поддерживает room_manager
+    current_players: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     deck_type: Mapped[str] = mapped_column(String(50), nullable=False, default="standard")
     # Банк: сумма ставок (анте), внесённых игроками. Повышать банк нельзя,
     # поэтому после старта партии ante фиксируется до окончания раунда.

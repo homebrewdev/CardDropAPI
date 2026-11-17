@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-in-production"
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # Logging
+    LOG_DIR: str = "log"
+    LOG_LEVEL: str = "INFO"
+    LOG_TO_CONSOLE: bool = True
+
     @property
     def database_url(self) -> str:
         if self.DB_DIALECT == "sqlite":

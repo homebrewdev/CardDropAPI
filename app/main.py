@@ -9,8 +9,9 @@ from app.ws.ws_handler import router as ws_router
 from app.rooms.room_manager import RoomManager
 from app.config import get_settings
 from app.db import init_db
+from app.logging_config import setup_logging
+from app.middleware import AccessLogMiddleware
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -19,7 +20,14 @@ room_manager = RoomManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting CardDropAPI...")
+    # Файл лога создаётся на каждый запуск: log/card_api_log_<дата>_<время>.log
+    log_file = setup_logging(
+        log_dir=settings.LOG_DIR,
+        level=settings.LOG_LEVEL,
+        to_console=settings.LOG_TO_CONSOLE,
+    )
+    app.state.log_file = log_file
+    logger.info("Starting CardDropAPI... (log file: %s)", log_file)
     await init_db()
     logger.info("Database tables created")
     yield
@@ -42,6 +50,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Логирование всех HTTP-операций. Добавляется последним, чтобы быть внешним
+# слоем и видеть итоговый статус ответа, включая ошибки CORS.
+app.add_middleware(AccessLogMiddleware)
 
 # Routers
 app.include_router(sessions_router)

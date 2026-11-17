@@ -1,177 +1,286 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { GameTable } from "./components/GameTable";
 import { Lobby } from "./components/Lobby";
-import { WaitingRoom } from "./components/WaitingRoom";
-import type { Session, GameState, WSMessage } from "./types";
-import { gameSocket } from "./ws";
+import type { GameState, SessionInfo, WSMessage } from "./types";
+import { gameSocket, CLOSE_REASONS } from "./ws";
+import {
+  createSession as apiCreateSession,
+  getSessionByCode,
+} from "./api";
 
-type Screen = "lobby" | "room";
-type Theme = "green" | "blue";
-
-function loadTheme(): Theme {
-  try {
-    return localStorage.getItem("theme") === "blue" ? "blue" : "green";
-  } catch {
-    return "green";
-  }
-}
-
-// Коды закрытия WS из app/ws/ws_handler.py
-const CLOSE_REASONS: Record<number, string> = {
-  4000: "Некорректный никнейм",
-  4001: "Комната с таким кодом не найдена",
-  4002: "Ошибка сервера при входе",
-  4005: "Партия в этой комнате уже идёт — дождись её конца",
-  4006: "Комната заполнена",
-};
+type Screen = "lobby" | "waiting" | "playing";
 
 function App() {
   const [screen, setScreen] = useState<Screen>("lobby");
+  const [session, setSession] = useState<SessionInfo | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<string | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Подписка одна на всё время жизни приложения: переподписка при каждом
+  // входе копила бы обработчики и дублировала сообщения
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem("theme", theme);
-    } catch {
-      // хранилище недоступно — тема просто не запомнится
-    }
-  }, [theme]);
-
-  function showNotice(text: string) {
-    setNotice(text);
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
-  }
-
-  function resetToLobby() {
-    gameSocket.disconnect();
-    setScreen("lobby");
-    setGameState(null);
-    setLastResult(null);
-  }
-
-  function handleWsMessage(msg: WSMessage) {
-    switch (msg.type) {
-      case "game_state":
-        setGameState(msg as unknown as GameState);
-        break;
-      case "round_started":
-        setLastResult(null);
-        break;
-      case "error":
-        showNotice(String(msg.message ?? "Ошибка"));
-        break;
-      case "player_folded":
-        showNotice(`${msg.nickname} сдался`);
-        break;
-      case "round_finished":
-        setLastResult(
-          msg.winner_nickname
-            ? `Партию выиграл ${msg.winner_nickname}, банк ${msg.bank_won}`
-            : "Партия закончилась без победителя"
+    const offMessage = gameSocket.onMessage((msg: WSMessage) => {
+      if (msg.type === "game_state") {
+        const state = msg as unknown as GameState;
+        setGameState(state);
+        setSession(state.session);
+        setError(null);
+        setScreen(
+          state.session_status === "waiting" ? "waiting" : "playing"
         );
-        break;
-      case "game_finished":
-        setLastResult(String(msg.message ?? "Игра окончена"));
-        break;
-      case "connection_closed": {
-        const code = Number(msg.code);
-        resetToLobby();
-        showNotice(CLOSE_REASONS[code] ?? `Соединение закрыто: ${msg.reason || code}`);
-        break;
+      } else if (msg.type === "error") {
+        setError(String(msg.message ?? "Ошибка сервера"));
       }
-    }
-  }
+    });
 
-  function enterRoom(joinCode: string, nick: string) {
-    gameSocket.disconnect();
-    setGameState(null);
-    setLastResult(null);
-    gameSocket.onMessage(handleWsMessage);
-    gameSocket.connect(joinCode, nick);
-    setScreen("room");
-  }
+    const offClose = gameSocket.onClose((event: CloseEvent) => {
+      const reason =
+        CLOSE_REASONS[event.code] ||
+        event.reason ||
+        `Соединение закрыто (код ${event.code})`;
+      if ([4000, 4001, 4005, 4006].includes(event.code)) {
+        // Сервер отклонил вход — показываем причину и возвращаемся в лобби
+        setError(reason);
+        setNotice(null);
+        setGameState(null);
+        setSession(null);
+        setScreen("lobby");
+      } else {
+        setNotice("Соединение потеряно, переподключаемся...");
+      }
+    });
+
+    return () => {
+      offMessage();
+      offClose();
+    };
+  }, []);
 
   function createSession(name: string, maxPlayers: number, nick: string) {
-    fetch("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, max_players: maxPlayers }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
+    setError(null);
+    setNotice(null);
+    // createSession уже разбирает detail из ответа, поэтому ошибка доходит
+    // до пользователя с текстом причины, а не «HTTP 409»
+    apiCreateSession(name, maxPlayers)
+      .then((s: SessionInfo) => {
+        setSession(s);
+        gameSocket.connect(s.join_code, nick);
+        setScreen("waiting");
       })
-      .then((s: Session) => enterRoom(s.join_code, nick))
-      .catch((err) => showNotice("Не удалось создать игру: " + err.message));
+      .catch((err) => alert("Ошибка: " + err.message));
   }
 
-  const playerId = gameState?.player.id;
+  async function joinSession(joinCode: string, nick: string) {
+    const code = joinCode.trim().toUpperCase();
+    setError(null);
+    setNotice(null);
+    setGameState(null);
+
+    // Сначала проверяем комнату по коду: без этого при неверном коде
+    // экран оставался пустым, а WS молча переподключался по кругу
+    try {
+      const room: SessionInfo = await getSessionByCode(code);
+      setSession(room);
+      gameSocket.connect(room.join_code, nick);
+      setScreen("waiting");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Комната не найдена");
+      setScreen("lobby");
+    }
+  }
+
+  function handleReady() {
+    if (!gameState) return;
+    gameSocket.send({ action: "ready", player_id: gameState.player.id });
+  }
+
+  function handleBet(bet: number) {
+    if (!gameState) return;
+    gameSocket.send({ action: "set_bet", bet });
+  }
+
+  function handlePlayCard(_playerCardId: number, cardId: number) {
+    if (!gameState) return;
+    gameSocket.send({
+      action: "play_card",
+      player_id: gameState.player.id,
+      card_id: cardId,
+      client_action_id: crypto.randomUUID(),
+    });
+  }
+
+  function handlePass() {
+    if (!gameState) return;
+    gameSocket.send({
+      action: "pass",
+      player_id: gameState.player.id,
+      client_action_id: crypto.randomUUID(),
+    });
+  }
+
+  function handleStartRound() {
+    gameSocket.send({ action: "start" });
+  }
+
+  function handleDisconnect() {
+    gameSocket.disconnect();
+    setScreen("lobby");
+    setSession(null);
+    setGameState(null);
+    setError(null);
+    setNotice(null);
+  }
+
+  const connectedCount = gameState
+    ? gameState.other_players.filter((p) => p.connected).length + 1
+    : 0;
+  const maxPlayers = session?.max_players ?? 4;
+  const canStart = connectedCount >= 2;
 
   return (
     <div className="app">
-      <button
-        className="btn btn-theme"
-        onClick={() => setTheme(theme === "green" ? "blue" : "green")}
-        title="Сменить тему"
-      >
-        {theme === "green" ? "🔵 Синяя тема" : "🟢 Зелёная тема"}
-      </button>
+      {error && (
+        <div className="banner banner-error">
+          <span>{error}</span>
+          <button className="banner-close" onClick={() => setError(null)}>
+            ×
+          </button>
+        </div>
+      )}
+      {notice && !error && (
+        <div className="banner banner-info">
+          <span>{notice}</span>
+          <button className="banner-close" onClick={() => setNotice(null)}>
+            ×
+          </button>
+        </div>
+      )}
 
-      {screen === "lobby" && <Lobby onCreate={createSession} onJoin={enterRoom} sessions={[]} />}
+      {screen === "lobby" && (
+        <Lobby onCreate={createSession} onJoin={joinSession} sessions={[]} />
+      )}
 
-      {screen === "room" && !gameState && (
+      {screen === "waiting" && (
         <div className="waiting-screen">
           <div className="waiting-box">
-            <p>Подключение...</p>
-            <button className="btn btn-secondary" onClick={resetToLobby}>
-              Отмена
-            </button>
+            <h2>Ожидание игроков</h2>
+            {session && (
+              <p>
+                Комната: <strong>{session.name}</strong>
+                <br />
+                Код: <strong className="join-code">{session.join_code}</strong>
+              </p>
+            )}
+
+            {!gameState && <p className="waiting">Подключение...</p>}
+
+            {gameState && (
+              <>
+                <p>
+                  Игроков: {connectedCount} / {maxPlayers}
+                </p>
+
+                <ul className="players-list">
+                  <li>
+                    <span>
+                      {gameState.player.nickname}{" "}
+                      {gameState.player.is_ready ? "✓" : "○"}
+                    </span>
+                    <span className="score">
+                      ★ {gameState.player.score} · ставка {gameState.player.bet}
+                    </span>
+                  </li>
+                  {gameState.other_players.map((p) => (
+                    <li key={p.id} className={p.connected ? "" : "offline"}>
+                      <span>
+                        {p.nickname} {p.is_ready ? "✓" : "○"}
+                        {!p.connected && " (нет связи)"}
+                      </span>
+                      <span className="score">
+                        ★ {p.score} · ставка {p.bet}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                <p className="bank-line">
+                  Банк: <strong>{gameState.ante}</strong>
+                </p>
+
+                <div className="waiting-actions">
+                  <BetForm
+                    defaultValue={gameState.player.bet || 100}
+                    onSubmit={handleBet}
+                  />
+                  <button className="btn btn-secondary" onClick={handleReady}>
+                    {gameState.player.is_ready ? "Готов ✓" : "Готов"}
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleStartRound}
+                    disabled={!canStart}
+                    title={
+                      canStart
+                        ? "Начать партию"
+                        : "Нужно минимум два подключённых игрока"
+                    }
+                  >
+                    Начать игру
+                  </button>
+                  <button className="btn btn-secondary" onClick={handleDisconnect}>
+                    Выйти
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
 
-      {screen === "room" && gameState && gameState.session_status !== "playing" && (
-        <WaitingRoom
-          key={gameState.join_code}
-          state={gameState}
-          lastResult={lastResult}
-          onReady={() => gameSocket.send({ action: "ready", player_id: playerId })}
-          onSetBet={(bet) => gameSocket.send({ action: "set_bet", bet })}
-          onStart={() => gameSocket.send({ action: "start" })}
-          onLeave={resetToLobby}
-        />
-      )}
-
-      {screen === "room" && gameState && gameState.session_status === "playing" && (
+      {screen === "playing" && gameState && (
         <GameTable
           state={gameState}
-          onPlayCard={(_pcId, cardId) =>
-            gameSocket.send({
-              action: "play_card",
-              player_id: playerId,
-              card_id: cardId,
-              client_action_id: crypto.randomUUID(),
-            })
-          }
-          onFold={() =>
-            gameSocket.send({
-              action: "fold",
-              player_id: playerId,
-              client_action_id: crypto.randomUUID(),
-            })
-          }
-          onDisconnect={resetToLobby}
+          onPlayCard={handlePlayCard}
+          onPass={handlePass}
+          onStartRound={handleStartRound}
+          onDisconnect={handleDisconnect}
         />
       )}
-
-      {notice && <div className="notice">{notice}</div>}
     </div>
+  );
+}
+
+function BetForm({
+  defaultValue,
+  onSubmit,
+}: {
+  defaultValue: number;
+  onSubmit: (bet: number) => void;
+}) {
+  const [value, setValue] = useState(String(defaultValue));
+
+  return (
+    <form
+      className="bet-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const bet = Number(value);
+        if (Number.isFinite(bet) && bet > 0) onSubmit(bet);
+      }}
+    >
+      <input
+        type="number"
+        min={1}
+        max={10000}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        aria-label="Ставка"
+      />
+      <button type="submit" className="btn btn-secondary">
+        Ставка
+      </button>
+    </form>
   );
 }
 
