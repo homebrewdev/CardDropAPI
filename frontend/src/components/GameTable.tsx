@@ -1,4 +1,5 @@
 import { Card } from "./Card";
+import { CoinPile } from "./CoinPile";
 import type { GameState, Player, PlayerCard } from "../types";
 
 interface GameTableProps {
@@ -78,13 +79,14 @@ export function GameTable({
         <div className="table-center">
           <div className="table-info">
             <span className="round-info">Раунд {state.round_number || 1}</span>
-            <span className="round-info">Банк: {state.ante}</span>
             {state.current_power !== null && (
               <span className="round-info">
                 Старшая сила: {state.current_power}
               </span>
             )}
           </div>
+
+          <CoinPile amount={state.ante} />
 
           {state.is_tiebreak && (
             <p className="tiebreak-note">Равные карты — переигровка</p>
