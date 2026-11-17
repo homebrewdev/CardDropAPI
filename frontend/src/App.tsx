@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { GameTable } from "./components/GameTable";
 import { Lobby } from "./components/Lobby";
+import { DemoTable } from "./components/DemoTable";
+import { ShareButton } from "./components/ShareButton";
+import { CopyCodeButton } from "./components/CopyCodeButton";
+import { CoinPile } from "./components/CoinPile";
 import type { GameState, SessionInfo, WSMessage } from "./types";
 import { gameSocket, CLOSE_REASONS } from "./ws";
 import {
@@ -68,7 +72,7 @@ function App() {
         gameSocket.connect(s.join_code, nick);
         setScreen("waiting");
       })
-      .catch((err) => alert("Ошибка: " + err.message));
+      .catch((err) => setError(err instanceof Error ? err.message : "Не удалось создать комнату"));
   }
 
   async function joinSession(joinCode: string, nick: string) {
@@ -162,15 +166,23 @@ function App() {
       )}
 
       {screen === "waiting" && (
-        <div className="waiting-screen">
-          <div className="waiting-box">
+        <div className="lobby">
+          <DemoTable />
+          <div className="lobby-overlay">
+          <div className="waiting-box lobby-modal" role="dialog" aria-modal="true">
             <h2>Ожидание игроков</h2>
             {session && (
               <p>
                 Комната: <strong>{session.name}</strong>
-                <br />
-                Код: <strong className="join-code">{session.join_code}</strong>
               </p>
+            )}
+            {session && (
+              <div className="code-row">
+                <span>Код:</span>
+                <strong className="join-code">{session.join_code}</strong>
+                <CopyCodeButton code={session.join_code} />
+                <ShareButton joinCode={session.join_code} roomName={session.name} />
+              </div>
             )}
 
             {!gameState && <p className="waiting">Подключение...</p>}
@@ -204,9 +216,7 @@ function App() {
                   ))}
                 </ul>
 
-                <p className="bank-line">
-                  Банк: <strong>{gameState.ante}</strong>
-                </p>
+                <CoinPile amount={gameState.ante} />
 
                 <div className="waiting-actions">
                   <BetForm
@@ -234,6 +244,7 @@ function App() {
                 </div>
               </>
             )}
+          </div>
           </div>
         </div>
       )}

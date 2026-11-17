@@ -25,10 +25,10 @@ export function WaitingRoom({ state, lastResult, onReady, onSetBet, onStart, onL
       <div className="waiting-box">
         <h2>{finished ? "Игра окончена" : "Ожидание игроков"}</h2>
         <p>
-          Код комнаты: <strong>{state.join_code}</strong>
+          Код комнаты: <strong>{state.session.join_code}</strong>
         </p>
         <p>
-          Игроков в сети: {online.length} / {state.max_players}
+          Игроков в сети: {online.length} / {state.session.max_players}
           {state.games_played > 0 && <> · Сыграно партий: {state.games_played}</>}
         </p>
 
