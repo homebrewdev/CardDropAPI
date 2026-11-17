@@ -1,5 +1,7 @@
+import { useRef } from "react";
 import { Card } from "./Card";
 import { CoinPile } from "./CoinPile";
+import { PoleDancer } from "./PoleDancer";
 import type { GameState, Player, PlayerCard } from "../types";
 
 interface GameTableProps {
@@ -25,6 +27,38 @@ export function GameTable({
   const allPlayers: Player[] = [state.player, ...state.other_players];
   const nicknameById = new Map(allPlayers.map((p) => [p.id, p.nickname]));
 
+  // Анимация вылета карт на стол. Для каждой карты один раз запоминаем,
+  // откуда она прилетела; карты, лежавшие на столе при открытии экрана
+  // (перезагрузка, переподключение), не анимируем.
+  const flyFrom = useRef<Map<number, React.CSSProperties | null>>(new Map());
+  const tableSeeded = useRef(false);
+  const opponentIds = state.other_players.map((p) => p.id);
+
+  function flyStyle(pc: PlayerCard): React.CSSProperties | null {
+    const known = flyFrom.current.get(pc.id);
+    if (known !== undefined) return known;
+
+    let style: React.CSSProperties | null = null;
+    if (tableSeeded.current) {
+      const oppIdx = opponentIds.indexOf(pc.player_id ?? -1);
+      const fromMe = pc.player_id === myPlayer.id || oppIdx < 0;
+      const n = opponentIds.length;
+      const x = fromMe ? 0 : (oppIdx - (n - 1) / 2) * 240;
+      const y = fromMe ? 300 : -260;
+      const r = ((pc.id * 47) % 50) - 25;
+      style = {
+        "--fx": `${x}px`,
+        "--fy": `${y}px`,
+        "--fr": `${r}deg`,
+      } as React.CSSProperties;
+    }
+    flyFrom.current.set(pc.id, style);
+    return style;
+  }
+
+  const tableCardStyles = state.table_cards.map(flyStyle);
+  tableSeeded.current = true;
+
   function handlePlayCard(pc: PlayerCard) {
     if (!canAct) return;
     onPlayCard(pc.id, pc.card.id);
@@ -32,6 +66,9 @@ export function GameTable({
 
   return (
     <div className="game-table">
+      <PoleDancer side="left" />
+      <PoleDancer side="right" />
+
       <button className="btn btn-logout" onClick={onDisconnect}>
         Выйти
       </button>
@@ -94,8 +131,12 @@ export function GameTable({
 
           {state.table_cards.length > 0 ? (
             <div className="played-cards">
-              {state.table_cards.map((pc) => (
-                <div key={pc.id} className="played-card">
+              {state.table_cards.map((pc, i) => (
+                <div
+                  key={pc.id}
+                  className={tableCardStyles[i] ? "played-card fly-in" : "played-card"}
+                  style={tableCardStyles[i] ?? undefined}
+                >
                   <Card
                     name={pc.card.name}
                     suit={pc.card.suit}

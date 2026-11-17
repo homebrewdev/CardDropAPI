@@ -368,6 +368,9 @@ body {
   min-height: 100vh;
   background: radial-gradient(ellipse at center, #1a6b3c 0%, #0f4a26 70%, #0a3319 100%);
   padding: 16px;
+  /* Свой контекст наложения: декорации с z-index:-1 лежат над фоном, но под игрой */
+  position: relative;
+  isolation: isolate;
 }
 
 .top-players {
@@ -1005,4 +1008,207 @@ body {
 .copy-btn.copy-fail {
   border-color: var(--danger);
   color: #f87171;
+}
+
+/* ====== Pole dancers ====== */
+.pole-dancer {
+  --neon: #ff3ea5;
+  position: fixed;
+  bottom: 0;
+  z-index: -1;
+  width: clamp(130px, 12vw, 190px);
+  height: min(78vh, 560px);
+  pointer-events: none;
+}
+
+.pole-left  { left: 8px; }
+.pole-right { right: 8px; --neon: #3ee0ff; }
+
+.pole-dancer svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pd-spot {
+  fill: var(--neon);
+  opacity: 0.07;
+  animation: pd-flicker 3.2s ease-in-out infinite;
+}
+
+.pd-stage-glow {
+  fill: var(--neon);
+  opacity: 0.25;
+  filter: blur(6px);
+}
+
+.pd-stage {
+  fill: #1b1b26;
+  stroke: var(--neon);
+  stroke-width: 1.5;
+}
+
+.pd-pole       { fill: #b9bec9; }
+.pd-pole-shine { fill: #fff; opacity: 0.7; }
+
+.pd-body {
+  fill: #12121a;
+  stroke: var(--neon);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.pd-limb {
+  fill: none;
+  stroke: #12121a;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pd-limb.pd-thigh { stroke-width: 9; }
+.pd-limb.pd-foot  { stroke-width: 5; }
+
+.pd-slide,
+.pd-spin,
+.pd-leg,
+.pd-arm {
+  transform-box: view-box;
+}
+
+.pole-dancer svg {
+  filter: drop-shadow(0 0 3px var(--neon)) drop-shadow(0 0 10px var(--neon));
+}
+
+/* Медленно съезжает вниз по шесту и поднимается обратно */
+.pd-slide {
+  animation: pd-slide 9s ease-in-out infinite;
+}
+
+/* Вращение вокруг шеста: сплющивание по X относительно оси шеста */
+.pd-spin {
+  transform-origin: 80px 0;
+  animation: pd-spin 4.5s ease-in-out infinite;
+}
+
+.pd-leg {
+  transform-origin: 108px 210px;
+  animation: pd-leg 2.25s ease-in-out infinite;
+}
+
+.pd-arm {
+  transform-origin: 104px 154px;
+  animation: pd-arm 2.25s ease-in-out infinite;
+}
+
+/* Правая танцует в противофазе, чтобы не было синхронного зеркала */
+.pole-right .pd-slide,
+.pole-right .pd-spin,
+.pole-right .pd-leg,
+.pole-right .pd-arm {
+  animation-delay: -1.7s;
+}
+
+.pole-right .pd-spin {
+  animation-direction: reverse;
+}
+
+@keyframes pd-slide {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(90px); }
+}
+
+@keyframes pd-spin {
+  0%   { transform: scaleX(1); }
+  45%  { transform: scaleX(-1); }
+  55%  { transform: scaleX(-1); }
+  100% { transform: scaleX(1); }
+}
+
+@keyframes pd-leg {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-38deg); }
+}
+
+@keyframes pd-arm {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-30deg); }
+}
+
+@keyframes pd-flicker {
+  0%, 100% { opacity: 0.07; }
+  50%      { opacity: 0.13; }
+}
+
+/* На узких экранах танцовщицы перекрыли бы карты */
+@media (max-width: 1100px) {
+  .pole-dancer { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-slide, .pd-spin, .pd-leg, .pd-arm, .pd-spot { animation: none; }
+}
+
+/* ====== Card played onto the table ====== */
+.played-card.fly-in {
+  position: relative;
+  z-index: 5;
+  animation: card-fly-in 0.6s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.played-card.fly-in .played-owner {
+  animation: owner-fade 0.4s ease-out 0.45s both;
+}
+
+/* Вспышка в момент приземления */
+.played-card.fly-in .card::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 12px;
+  box-shadow: 0 0 22px 6px rgba(255, 215, 106, 0.85);
+  opacity: 0;
+  pointer-events: none;
+  animation: card-land-flash 0.7s ease-out 0.4s both;
+}
+
+.played-card .card {
+  position: relative;
+}
+
+@keyframes card-fly-in {
+  0% {
+    transform: translate(var(--fx), var(--fy)) rotate(var(--fr)) scale(0.75);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  65% {
+    transform: translate(0, 0) rotate(calc(var(--fr) * -0.15)) scale(1.12);
+  }
+  82% {
+    transform: translate(0, 0) rotate(0deg) scale(0.96);
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes card-land-flash {
+  0%   { opacity: 0; }
+  25%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes owner-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .played-card.fly-in,
+  .played-card.fly-in .played-owner,
+  .played-card.fly-in .card::after { animation: none; }
 }
