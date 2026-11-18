@@ -167,6 +167,21 @@ async def websocket_join(
                         )
                         break
 
+                elif action == "flip":
+                    # Открыть верхнюю карту стопки (без очереди ходов)
+                    async for db in get_db():
+                        await room_manager.handle_flip(
+                            player.id,
+                            str(data.get("client_action_id") or ""),
+                            db,
+                        )
+                        break
+
+                elif action == "shuffle":
+                    async for db in get_db():
+                        await room_manager.handle_shuffle(player.id, db)
+                        break
+
                 elif action in ("pass", "fold"):
                     fold_data = WSFold(**{**data, "action": "fold"}) if action == "fold" else WSPass(**data)
                     async for db in get_db():

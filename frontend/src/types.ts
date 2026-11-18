@@ -67,6 +67,12 @@ export interface GameState {
   other_players: Player[];
   table_cards: PlayerCard[];
   round_status: string;
+  /** Кто участвует во вскрытии текущей фазы (при переигровке — только равные) */
+  flip_contenders: number[];
+  /** Кто в этой фазе уже открыл карту */
+  flipped_ids: number[];
+  /** Сколько карт ушло в биту за эту партию */
+  discard_count: number;
   timestamp: string;
 }
 

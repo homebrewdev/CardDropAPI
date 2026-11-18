@@ -32,7 +32,10 @@ MAX_ANTE = 10000
 NO_LEADER_ORDER = "highest"
 
 # Сколько последних сыгранных карт показывать на столе
-TABLE_CARDS_LIMIT = 4
+TABLE_CARDS_LIMIT = 8
+
+# Сколько секунд показывать карты раунда перед автоматической новой раздачей
+NEXT_ROUND_DELAY = 4.0
 
 
 def utcnow() -> datetime:
@@ -72,6 +75,11 @@ class RoomManager:
         # random.Random(seed), чтобы раздача была воспроизводимой
         self._rng = rng or random.Random()
         self._lock = asyncio.Lock()
+        # Пауза между раундами: карты остаются на столе, чтобы игроки их
+        # рассмотрели, затем сервер сам раздаёт новый раунд.
+        # None — автостарт выключен (тесты сами вызывают start_round)
+        self.next_round_delay: Optional[float] = NEXT_ROUND_DELAY
+        self._next_round_tasks: Dict[str, asyncio.Task] = {}
 
     # ------------------------------------------------------------------
     # Подключение / отключение
@@ -149,11 +157,18 @@ class RoomManager:
                     update(Player).where(Player.id == player_id).values(folded=1)
                 )
                 await db.commit()
-                await self._advance_if_stalled(join_code, db)
+                # Ушедший выбывает из вскрытия: возможно, раунд уже решён
+                round_obj = await self._current_round(session.id, db)
+                if round_obj and round_obj.status == "active":
+                    await self._settle_flip(session, round_obj, db)
 
             await self._broadcast(
                 join_code, {"type": "player_left", "player_id": player_id}
             )
+
+            # Ушёл единственный, кто ещё не поставил, — остальные могут начинать
+            if session and session.status == "waiting":
+                await self._maybe_autostart(join_code, db)
 
     async def broadcast(self, player_id: int, data: dict):
         """Отправить всем в комнате игрока, кроме него"""
@@ -289,7 +304,34 @@ class RoomManager:
             session.join_code,
             {"type": "bets_updated", "player_id": player_id, "bet": bet},
         )
+        await self._maybe_autostart(session.join_code, db)
         return {"type": "bets_updated", "player_id": player_id, "bet": bet}
+
+    async def _maybe_autostart(self, join_code: str, db: AsyncSession) -> bool:
+        """Партия стартует сама, когда все подключённые игроки (минимум двое)
+        поставили ставку. Кнопки «Начать игру» нет."""
+        result = await db.execute(select(Session).where(Session.join_code == join_code))
+        session = result.scalar_one_or_none()
+        if not session or session.status != "waiting":
+            return False
+        connected = self._connected_ids(join_code)
+        if len(connected) < MIN_PLAYERS:
+            return False
+        result = await db.execute(
+            select(Player).where(Player.session_id == session.id, Player.id.in_(connected))
+        )
+        players = result.scalars().all()
+        if len(players) < MIN_PLAYERS or any(not p.bet for p in players):
+            return False
+        try:
+            await self.start_round(join_code, db)
+        except GameActionError as e:
+            logger.info("Autostart skipped (%s): %s", join_code, e.message)
+            await self._broadcast(
+                join_code, {"type": "error", "error_type": e.error_type, "message": e.message}
+            )
+            return False
+        return True
 
     async def _recalc_ante(self, session: Session, db: AsyncSession):
         """Банк = сумма ставок всех игроков сессии (до старта партии)"""
@@ -330,6 +372,10 @@ class RoomManager:
         if session.status == "cancelled":
             raise GameActionError("Сессия отменена", "invalid_state")
 
+        # Следующий раунд той же партии: карты не раздаются заново,
+        # игроки доигрывают тем, что осталось в стопках
+        continuing = session.status == "playing"
+
         if session.status == "finished":
             # Новая игра в той же комнате: обнуляем банкроллы прошлой партии
             await db.execute(
@@ -367,6 +413,15 @@ class RoomManager:
         players = [p for p in candidates if p.score != 0] if has_money else candidates
         if len(players) < MIN_PLAYERS:
             raise GameActionError("Игроков с средствами меньше двух", "not_enough_funds")
+
+        if continuing:
+            sizes = await self._hand_sizes(session.id, db)
+            players = [p for p in players if sizes.get(p.id, 0) > 0]
+            if len(players) < MIN_PLAYERS:
+                # Карты кончились: партия окончена, побеждает самый богатый
+                await self._finish_game_out_of_cards(session, db)
+                await self._broadcast_states(join_code, db)
+                return {"type": "game_finished"}
 
         # Ставка инициатора применяется к первому игроку, остальные добирают дефолт
         if ante is not None:
@@ -418,7 +473,31 @@ class RoomManager:
         await db.commit()
         await db.refresh(new_round)
 
-        # Сброс предыдущих рук и флагов сдачи, иначе карты накапливаются между партиями.
+        if continuing:
+            for p in players:
+                p.folded = 0
+            await db.commit()
+            await self._broadcast_states(join_code, db)
+            await self._broadcast(
+                join_code,
+                {
+                    "type": "round_started",
+                    "round_number": next_number,
+                    "cards_per_player": 0,
+                    "ante": session.ante,
+                    "current_player_id": first_player_id,
+                },
+            )
+            return {
+                "type": "round_started",
+                "round_number": next_number,
+                "cards_per_player": 0,
+                "ante": session.ante,
+                "current_player_id": first_player_id,
+            }
+
+        # Новая партия. Сброс предыдущих рук и флагов сдачи, иначе карты
+        # накапливаются между партиями.
         # Только карты этой сессии: без join удалялись бы руки всех комнат.
         result = await db.execute(
             select(PlayerCard)
@@ -582,6 +661,190 @@ class RoomManager:
 
         await self._broadcast_states(session.join_code, db)
         return await self._build_state(session.join_code, player_id, db)
+
+    # ------------------------------------------------------------------
+    # Вскрытие карт: стопка рубашкой вверх, без очереди ходов
+    # ------------------------------------------------------------------
+
+    async def _flip_status(self, session: Session, round_obj: Round, db: AsyncSession) -> dict:
+        """Восстановить состояние раунда по истории вскрытий.
+
+        Каждый участник открывает по одной верхней карте, порядок не важен.
+        Когда открыли все, старшая карта забирает банк. Если старших
+        несколько, только эти игроки открывают ещё по одной (переигровка).
+        """
+        result = await db.execute(
+            select(Player).where(Player.session_id == session.id).order_by(Player.id)
+        )
+        players = result.scalars().all()
+        folded = {p.id for p in players if p.folded}
+        sizes = await self._hand_sizes(session.id, db)
+
+        result = await db.execute(
+            select(RoundAction, Card)
+            .join(PlayerCard, RoundAction.player_card_id == PlayerCard.id)
+            .join(Card, PlayerCard.card_id == Card.id)
+            .where(
+                RoundAction.round_id == round_obj.id,
+                RoundAction.action_type == "play",
+            )
+            .order_by(RoundAction.id)
+        )
+        plays = result.all()
+        played_ids = {a.player_id for a, _ in plays}
+
+        # Участники раунда: кому раздали карты и кто уже открывал
+        contenders = [
+            p.id for p in players if sizes.get(p.id, 0) > 0 or p.id in played_ids
+        ]
+        flips: Dict[int, tuple] = {}
+        phase = 0
+        st = {"finished": False, "winner": None}
+
+        def active() -> List[int]:
+            # Участвует: не выбыл и либо уже открыл, либо есть что открыть
+            return [
+                pid for pid in contenders
+                if pid not in folded and (pid in flips or sizes.get(pid, 0) > 0)
+            ]
+
+        def try_complete() -> bool:
+            """True: фаза закрылась переигровкой, проверить ещё раз"""
+            nonlocal contenders, flips, phase
+            act = active()
+            if not act:
+                st["finished"] = True
+                return False
+            if len(act) == 1:
+                st["finished"] = True
+                st["winner"] = act[0]
+                return False
+            if not all(pid in flips for pid in act):
+                return False
+            top = max(flips[pid][0] for pid in act)
+            tied = [pid for pid in act if flips[pid][0] == top]
+            if len(tied) == 1:
+                st["finished"] = True
+                st["winner"] = tied[0]
+                return False
+            if all(sizes.get(pid, 0) == 0 for pid in tied):
+                # Переигрывать нечем: банк у того, кто открыл старшую первым
+                st["finished"] = True
+                st["winner"] = min(tied, key=lambda pid: flips[pid][1])
+                return False
+            contenders = tied
+            flips = {}
+            phase += 1
+            return True
+
+        for act_row, card in plays:
+            if st["finished"]:
+                break
+            flips[act_row.player_id] = (card.power, act_row.id)
+            while not st["finished"] and try_complete():
+                pass
+        while not st["finished"] and try_complete():
+            pass
+
+        act = active()
+        return {
+            "contenders": act,
+            "flipped": [pid for pid in flips if pid in act],
+            "phase": phase,
+            "finished": st["finished"],
+            "winner": st["winner"],
+        }
+
+    async def _settle_flip(self, session: Session, round_obj: Round, db: AsyncSession):
+        """После вскрытия или выхода игрока: не решился ли раунд"""
+        if round_obj.status != "active":
+            return
+        status = await self._flip_status(session, round_obj, db)
+        round_obj.is_tiebreak = 1 if status["phase"] > 0 else 0
+        if status["finished"]:
+            round_obj.is_closed = 1
+            await db.commit()
+            await self._award_bank(session, round_obj, status["winner"], db)
+        else:
+            await db.commit()
+
+    async def handle_flip(
+        self, player_id: int, client_action_id: str, db: AsyncSession
+    ) -> dict:
+        """Открыть верхнюю карту своей стопки и положить её на стол"""
+        if client_action_id and self._check_idempotent(player_id, client_action_id):
+            session = await self._get_session_by_player(player_id, db)
+            return await self._build_state(session.join_code, player_id, db)
+
+        session = await self._get_session_by_player(player_id, db)
+        if session.status != "playing":
+            raise GameActionError("Партия не идёт", "invalid_state")
+        round_obj = await self._current_round(session.id, db)
+        if not round_obj or round_obj.status != "active":
+            raise GameActionError("Активного раунда нет", "invalid_state")
+
+        result = await db.execute(select(Player).where(Player.id == player_id))
+        player = result.scalar_one_or_none()
+        if player.folded:
+            raise GameActionError("Ты выбыл из этого раунда", "folded")
+
+        status = await self._flip_status(session, round_obj, db)
+        if player_id in status["flipped"]:
+            raise GameActionError("Ты уже открыл карту, ждём остальных", "already_flipped")
+        if player_id not in status["contenders"]:
+            raise GameActionError("Ты не участвуешь в переигровке", "not_contender")
+
+        result = await db.execute(
+            select(PlayerCard)
+            .where(PlayerCard.player_id == player_id, PlayerCard.played_at.is_(None))
+            .order_by(PlayerCard.hand_order, PlayerCard.id)
+            .limit(1)
+        )
+        pc = result.scalar_one_or_none()
+        if not pc:
+            raise GameActionError("Карт в стопке не осталось", "no_cards")
+        result = await db.execute(select(Card).where(Card.id == pc.card_id))
+        card = result.scalar_one()
+
+        pc.played_at = utcnow()
+        db.add(
+            RoundAction(
+                round_id=round_obj.id,
+                player_id=player_id,
+                player_card_id=pc.id,
+                action_type="play",
+                client_action_id=client_action_id or None,
+                metadata_json={"power": card.power, "phase": status["phase"], "flip": True},
+            )
+        )
+        if round_obj.current_power is None or card.power >= round_obj.current_power:
+            round_obj.current_power = card.power
+            round_obj.leader_player_id = player_id
+        if client_action_id:
+            self._mark_action(player_id, client_action_id)
+        await db.commit()
+
+        await self._settle_flip(session, round_obj, db)
+        await self._broadcast_states(session.join_code, db)
+        return await self._build_state(session.join_code, player_id, db)
+
+    async def handle_shuffle(self, player_id: int, db: AsyncSession):
+        """Перемешать свою стопку"""
+        session = await self._get_session_by_player(player_id, db)
+        result = await db.execute(
+            select(PlayerCard).where(
+                PlayerCard.player_id == player_id, PlayerCard.played_at.is_(None)
+            )
+        )
+        cards = list(result.scalars().all())
+        orders = list(range(len(cards)))
+        self._rng.shuffle(orders)
+        for pc, order in zip(cards, orders):
+            pc.hand_order = order
+        await db.commit()
+        await self._broadcast(
+            session.join_code, {"type": "player_shuffled", "player_id": player_id}
+        )
 
     async def handle_fold(
         self,
@@ -855,6 +1118,13 @@ class RoomManager:
             if row:
                 winner_id = row[0].player_id
 
+        await self._award_bank(session, round_obj, winner_id, db)
+
+    async def _award_bank(
+        self, session: Session, round_obj: Round, winner_id: Optional[int], db: AsyncSession
+    ):
+        """Закрыть раунд и отдать банк победителю (None — банк никому)"""
+        ante = session.ante
         round_obj.status = "finished"
         round_obj.finished_at = utcnow()
         round_obj.current_turn_player_id = None
@@ -885,6 +1155,78 @@ class RoomManager:
         )
 
         await self._maybe_finish_game(session, db)
+
+        if session.status == "playing":
+            self._schedule_next_round(session.join_code, round_obj.id)
+
+    def _schedule_next_round(self, join_code: str, round_id: int):
+        """Через паузу раздать новый раунд (если партия ещё идёт)"""
+        if self.next_round_delay is None:
+            return
+        prev = self._next_round_tasks.get(join_code)
+        if prev and not prev.done():
+            prev.cancel()
+        self._next_round_tasks[join_code] = asyncio.create_task(
+            self._auto_next_round(join_code, round_id, self.next_round_delay)
+        )
+
+    async def _auto_next_round(self, join_code: str, round_id: int, delay: float):
+        await asyncio.sleep(delay)
+        from app.db import async_session
+
+        try:
+            async with async_session() as db:
+                result = await db.execute(select(Session).where(Session.join_code == join_code))
+                session = result.scalar_one_or_none()
+                if not session or session.status != "playing":
+                    return
+                current = await self._current_round(session.id, db)
+                # Пока шла пауза, раунд уже начали вручную
+                if not current or current.id != round_id or current.status != "finished":
+                    return
+                try:
+                    await self.start_round(join_code, db)
+                except GameActionError as e:
+                    logger.info("Auto next round skipped (%s): %s", join_code, e.message)
+                    await self._broadcast(
+                        join_code,
+                        {"type": "error", "error_type": e.error_type, "message": e.message},
+                    )
+        except Exception:
+            logger.exception("Auto next round failed (%s)", join_code)
+        finally:
+            if self._next_round_tasks.get(join_code) is asyncio.current_task():
+                self._next_round_tasks.pop(join_code, None)
+
+    async def _finish_game_out_of_cards(self, session: Session, db: AsyncSession):
+        """Партия окончена: играть больше нечем. Победитель — у кого больше средств"""
+        result = await db.execute(
+            select(Player).where(Player.session_id == session.id).order_by(Player.id)
+        )
+        players = result.scalars().all()
+        winner = max(players, key=lambda p: p.score) if players else None
+        if winner is not None and sum(1 for p in players if p.score == winner.score) > 1:
+            winner = None  # ничья по деньгам
+        session.status = "finished"
+        session.winner_nickname = winner.nickname if winner else None
+        await db.commit()
+        await self._broadcast(
+            session.join_code,
+            {
+                "type": "game_finished",
+                "winner_player_id": winner.id if winner else None,
+                "winner_nickname": winner.nickname if winner else None,
+                "scores": [
+                    {"player_id": p.id, "nickname": p.nickname, "score": p.score}
+                    for p in players
+                ],
+                "message": (
+                    f"Карты кончились. Партию выиграл {winner.nickname}"
+                    if winner
+                    else "Карты кончились. Ничья"
+                ),
+            },
+        )
 
     async def _maybe_finish_game(self, session: Session, db: AsyncSession):
         """Партия окончена, когда средства остались максимум у одного игрока"""
@@ -997,9 +1339,9 @@ class RoomManager:
         round_obj = await self._current_round(session.id, db)
 
         # Карты на столе (последние сыгранные в раунде). После завершения
-        # раунда стол очищается: банк уже ушёл победителю
+        # раунда они остаются видны до следующей раздачи
         table_cards: List[PlayerCardResponse] = []
-        if round_obj and round_obj.status == "active":
+        if round_obj:
             result = await db.execute(
                 select(RoundAction, PlayerCard, Card)
                 .join(PlayerCard, RoundAction.player_card_id == PlayerCard.id)
@@ -1026,6 +1368,32 @@ class RoomManager:
                         player_id=act.player_id,
                     ).model_dump()
                 )
+
+        # Кто участвует во вскрытии и кто уже открыл карту
+        flip_contenders: List[int] = []
+        flipped_ids: List[int] = []
+        if round_obj and round_obj.status == "active" and session.status == "playing":
+            fs = await self._flip_status(session, round_obj, db)
+            flip_contenders, flipped_ids = fs["contenders"], fs["flipped"]
+
+        # Бита: все карты, открытые в этой партии (колода партии — Deck сессии;
+        # новая партия пересобирает колоду, и бита начинается с нуля).
+        # Карты активного раунда ещё лежат на столе — в биту их не считаем.
+        result = await db.execute(
+            select(func.count(PlayerCard.id))
+            .join(Deck, PlayerCard.deck_id == Deck.id)
+            .where(Deck.session_id == session.id, PlayerCard.played_at.is_not(None))
+        )
+        discard_count = result.scalar_one()
+        if round_obj and round_obj.status == "active":
+            result = await db.execute(
+                select(func.count(RoundAction.id)).where(
+                    RoundAction.round_id == round_obj.id,
+                    RoundAction.action_type == "play",
+                )
+            )
+            discard_count -= result.scalar_one()
+        discard_count = max(discard_count, 0)
 
         connected = set(self._connected_ids(join_code))
         other_payload = []
@@ -1077,6 +1445,9 @@ class RoomManager:
             "other_players": other_payload,
             "table_cards": table_cards,
             "round_status": round_obj.status if round_obj else "pending",
+            "flip_contenders": flip_contenders,
+            "flipped_ids": flipped_ids,
+            "discard_count": discard_count,
             "timestamp": utcnow().isoformat(),
         }
 

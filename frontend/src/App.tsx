@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { GameTable } from "./components/GameTable";
+import { GameTable, type LastRound } from "./components/GameTable";
 import { Lobby } from "./components/Lobby";
 import { DemoTable } from "./components/DemoTable";
-import { ShareButton } from "./components/ShareButton";
+import { SocialShareButtons } from "./components/ShareButton";
 import { CopyCodeButton } from "./components/CopyCodeButton";
 import { CoinPile } from "./components/CoinPile";
 import type { GameState, SessionInfo, WSMessage } from "./types";
@@ -20,7 +20,7 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [lastRound, setLastRound] = useState<{ winner: string | null; bank: number } | null>(null);
+  const [lastRound, setLastRound] = useState<LastRound | null>(null);
 
   // Подписка одна на всё время жизни приложения: переподписка при каждом
   // входе копила бы обработчики и дублировала сообщения
@@ -37,6 +37,7 @@ function App() {
       } else if (msg.type === "round_finished") {
         setLastRound({
           winner: (msg.winner_nickname as string | null) ?? null,
+          winnerId: (msg.winner_player_id as number | null) ?? null,
           bank: Number(msg.bank_won ?? 0),
         });
       } else if (msg.type === "error") {
@@ -110,23 +111,12 @@ function App() {
     gameSocket.send({ action: "set_bet", bet });
   }
 
-  function handlePlayCard(_playerCardId: number, cardId: number) {
-    if (!gameState) return;
-    gameSocket.send({
-      action: "play_card",
-      player_id: gameState.player.id,
-      card_id: cardId,
-      client_action_id: crypto.randomUUID(),
-    });
+  function handleFlip() {
+    gameSocket.send({ action: "flip", client_action_id: crypto.randomUUID() });
   }
 
-  function handlePass() {
-    if (!gameState) return;
-    gameSocket.send({
-      action: "pass",
-      player_id: gameState.player.id,
-      client_action_id: crypto.randomUUID(),
-    });
+  function handleShuffle() {
+    gameSocket.send({ action: "shuffle" });
   }
 
   function handleStartRound() {
@@ -147,6 +137,10 @@ function App() {
     : 0;
   const maxPlayers = session?.max_players ?? 4;
   const canStart = connectedCount >= 2;
+  // Партия стартует сама, когда все подключённые поставили — кто ещё нет
+  const waitingBets = gameState
+    ? gameState.other_players.filter((p) => p.connected && !p.bet).map((p) => p.nickname)
+    : [];
 
   return (
     <div className="app">
@@ -176,6 +170,17 @@ function App() {
           <DemoTable />
           <div className="lobby-overlay">
           <div className="waiting-box lobby-modal" role="dialog" aria-modal="true">
+            <button
+              type="button"
+              className="modal-close"
+              onClick={handleDisconnect}
+              title="Выйти из комнаты"
+              aria-label="Выйти из комнаты"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
             <h2>Ожидание игроков</h2>
             {session && (
               <p>
@@ -184,10 +189,12 @@ function App() {
             )}
             {session && (
               <div className="code-row">
-                <span>Код:</span>
-                <strong className="join-code">{session.join_code}</strong>
-                <CopyCodeButton code={session.join_code} />
-                <ShareButton joinCode={session.join_code} roomName={session.name} />
+                <div className="code-main">
+                  <span>Код:</span>
+                  <strong className="join-code">{session.join_code}</strong>
+                  <CopyCodeButton code={session.join_code} />
+                </div>
+                <SocialShareButtons joinCode={session.join_code} roomName={session.name} />
               </div>
             )}
 
@@ -224,29 +231,40 @@ function App() {
 
                 <CoinPile amount={gameState.ante} />
 
+                {/* Что сделать, чтобы начать: шаги с отметками */}
+                <ol className="next-steps">
+                  {[
+                    { done: gameState.player.bet > 0, text: "Сделай ставку" },
+                    {
+                      done: false,
+                      text: !canStart
+                        ? "Дождись второго игрока — поделись кодом комнаты"
+                        : waitingBets.length > 0
+                          ? `Ждём ставки: ${waitingBets.join(", ")}`
+                          : "Все поставили — начинаем…",
+                    },
+                  ].map((step, i, arr) => {
+                    const current = !step.done && arr.slice(0, i).every((x) => x.done);
+                    return (
+                      <li
+                        key={i}
+                        className={step.done ? "done" : current ? "current" : ""}
+                      >
+                        <span className="step-mark">{step.done ? "✓" : i + 1}</span>
+                        {step.text}
+                      </li>
+                    );
+                  })}
+                </ol>
+
                 <div className="waiting-actions">
                   <BetForm
                     defaultValue={gameState.player.bet || 100}
+                    currentBet={gameState.player.bet}
                     onSubmit={handleBet}
+                    isReady={gameState.player.is_ready}
+                    onReady={handleReady}
                   />
-                  <button className="btn btn-secondary" onClick={handleReady}>
-                    {gameState.player.is_ready ? "Готов ✓" : "Готов"}
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleStartRound}
-                    disabled={!canStart}
-                    title={
-                      canStart
-                        ? "Начать партию"
-                        : "Нужно минимум два подключённых игрока"
-                    }
-                  >
-                    Начать игру
-                  </button>
-                  <button className="btn btn-secondary" onClick={handleDisconnect}>
-                    Выйти
-                  </button>
                 </div>
               </>
             )}
@@ -258,8 +276,8 @@ function App() {
       {screen === "playing" && gameState && (
         <GameTable
           state={gameState}
-          onPlayCard={handlePlayCard}
-          onPass={handlePass}
+          onFlip={handleFlip}
+          onShuffle={handleShuffle}
           onStartRound={handleStartRound}
           lastRound={lastRound}
           onDisconnect={handleDisconnect}
@@ -269,36 +287,108 @@ function App() {
   );
 }
 
+const BET_MIN = 1;
+const BET_MAX = 10000;
+const BET_STEP = 50;
+
+function clampBet(n: number): number {
+  return Math.min(BET_MAX, Math.max(BET_MIN, Math.round(n)));
+}
+
+/** Строка ставки: «Ваша ставка» [−] [поле] [+] [Поставить],
+ *  под ней — кнопка «Готов» на всю ширину строки */
 function BetForm({
   defaultValue,
+  currentBet,
   onSubmit,
+  isReady,
+  onReady,
 }: {
   defaultValue: number;
+  /** Ставка, подтверждённая сервером (0 — ещё не ставил) */
+  currentBet: number;
   onSubmit: (bet: number) => void;
+  isReady: boolean;
+  onReady: () => void;
 }) {
   const [value, setValue] = useState(String(defaultValue));
+  const num = Number(value);
+  const valid = Number.isFinite(num) && num >= BET_MIN && num <= BET_MAX;
+  // Ставка принята сервером и в поле то же значение — кнопка «выполнена»
+  const placed = currentBet > 0 && valid && clampBet(num) === currentBet;
+
+  function step(delta: number) {
+    const base = Number.isFinite(num) ? num : defaultValue;
+    // Шаг кратный BET_STEP: 100 → 150, 120 → 150 / 100
+    const next =
+      delta > 0
+        ? Math.floor(base / BET_STEP) * BET_STEP + BET_STEP
+        : Math.ceil(base / BET_STEP) * BET_STEP - BET_STEP;
+    setValue(String(clampBet(next)));
+  }
 
   return (
-    <form
-      className="bet-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const bet = Number(value);
-        if (Number.isFinite(bet) && bet > 0) onSubmit(bet);
-      }}
-    >
-      <input
-        type="number"
-        min={1}
-        max={10000}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        aria-label="Ставка"
-      />
-      <button type="submit" className="btn btn-secondary">
-        Ставка
+    <div className="bet-panel">
+      <form
+        className="bet-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid && !placed) onSubmit(clampBet(num));
+        }}
+      >
+        <label className="bet-label" htmlFor="bet-input">
+          Ваша ставка
+        </label>
+        <div className="bet-stepper">
+          <button
+            type="button"
+            className="bet-step"
+            onClick={() => step(-1)}
+            disabled={Number.isFinite(num) && num <= BET_MIN}
+            aria-label="Уменьшить ставку"
+            title={`Уменьшить на ${BET_STEP}`}
+          >
+            −
+          </button>
+          <input
+            id="bet-input"
+            type="number"
+            inputMode="numeric"
+            min={BET_MIN}
+            max={BET_MAX}
+            step={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={() => valid || setValue(String(clampBet(Number.isFinite(num) ? num : defaultValue)))}
+          />
+          <button
+            type="button"
+            className="bet-step"
+            onClick={() => step(1)}
+            disabled={Number.isFinite(num) && num >= BET_MAX}
+            aria-label="Увеличить ставку"
+            title={`Увеличить на ${BET_STEP}`}
+          >
+            +
+          </button>
+        </div>
+        <button
+          type="submit"
+          className={placed ? "btn bet-submit is-done" : "btn btn-primary bet-submit"}
+          disabled={!valid || placed}
+          title={placed ? "Ставка принята — измените сумму, чтобы переставить" : "Поставить"}
+        >
+          {placed ? "Поставлено ✓" : "Поставить"}
+        </button>
+      </form>
+      <button
+        type="button"
+        className={isReady ? "btn btn-ready is-ready" : "btn btn-ready"}
+        onClick={onReady}
+      >
+        {isReady ? "Готов ✓" : "Готов"}
       </button>
-    </form>
+    </div>
   );
 }
 

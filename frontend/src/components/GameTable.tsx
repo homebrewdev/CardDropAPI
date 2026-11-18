@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { DiscardPile } from "./DiscardPile";
 import { Card } from "./Card";
 import { CoinPile } from "./CoinPile";
 import { PoleDancer } from "./PoleDancer";
@@ -7,32 +8,219 @@ import type { GameState, Player, PlayerCard } from "../types";
 
 interface GameTableProps {
   state: GameState;
-  onPlayCard: (playerCardId: number, cardId: number) => void;
-  onPass: () => void;
+  onFlip: () => void;
+  onShuffle: () => void;
   onStartRound: () => void;
   onDisconnect: () => void;
-  lastRound?: { winner: string | null; bank: number } | null;
+  lastRound?: LastRound | null;
 }
+
+export interface LastRound {
+  winner: string | null;
+  winnerId: number | null;
+  bank: number;
+}
+
+/** Сколько секунд карты раунда лежат на столе (как NEXT_ROUND_DELAY на сервере) */
+const NEXT_ROUND_DELAY = 4;
+/** Через сколько мс после конца раунда карты улетают в биту и сколько летят */
+const COLLECT_AFTER_MS = 2200;
+const COLLECT_FLIGHT_MS = 800;
+/** Карты улетают по одной с этим интервалом */
+const COLLECT_STAGGER_MS = 110;
+/** Полёт монет из банка к победителю */
+const COIN_FLIGHT_MS = 900;
+const COIN_STAGGER_MS = 55;
+
+interface FlyingCoins {
+  from: { x: number; y: number };
+  coins: { dx: number; dy: number; arc: number; delay: number; spin: number }[];
+  to: { x: number; y: number };
+  landAt: number;
+}
+
+function coinCountFor(bank: number): number {
+  if (bank <= 0) return 0;
+  return Math.min(14, Math.max(5, Math.round(3 * Math.log2(bank / 25 + 1))));
+}
+
+type CollectPhase = "none" | "measure" | "flying" | "done";
 
 export function GameTable({
   state,
-  onPlayCard,
-  onPass,
+  onFlip,
+  onShuffle,
   onStartRound,
   onDisconnect,
   lastRound,
 }: GameTableProps) {
   const myPlayer = state.player;
-  const isMyTurn = state.current_player_id === myPlayer.id;
   const isFinished = state.session_status === "finished";
-  const canAct = isMyTurn && !myPlayer.folded && !isFinished;
-  // Раунд закрыт, банк выплачен, а партия продолжается: ход ни у кого,
-  // нужна новая раздача
+  const roundActive = state.round_status === "active" && !isFinished;
+  const contenders = new Set(state.flip_contenders ?? []);
+  const flipped = new Set(state.flipped_ids ?? []);
+  const iAmIn = contenders.has(myPlayer.id);
+  const iFlipped = flipped.has(myPlayer.id);
+  // Очереди нет: открыть карту может любой участник, кто ещё не открыл
+  const canFlip =
+    roundActive && iAmIn && !iFlipped && !myPlayer.folded && myPlayer.cards_left > 0;
+
+  const [shuffling, setShuffling] = useState(false);
+  function handleShuffle() {
+    if (myPlayer.cards_left < 2 || shuffling) return;
+    onShuffle();
+    setShuffling(true);
+    window.setTimeout(() => setShuffling(false), 600);
+  }
+
+  function handleFlip() {
+    if (canFlip && !shuffling) onFlip();
+  }
+  // Раунд закрыт, банк выплачен, а партия продолжается: карты лежат на
+  // столе, сервер сам раздаст новый раунд через NEXT_ROUND_DELAY секунд
   const isRoundOver =
     !isFinished &&
     state.round_status === "finished" &&
     !state.is_tiebreak &&
     state.current_player_id === null;
+
+  const [countdown, setCountdown] = useState(NEXT_ROUND_DELAY);
+  // Сервер раздаёт сам; кнопка «Раздать» — только если он не справился
+  // за разумное время (иначе она мелькала бы на каждом раунде)
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!isRoundOver) return;
+    setCountdown(NEXT_ROUND_DELAY);
+    setStalled(false);
+    const t = window.setInterval(() => {
+      setCountdown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000);
+    const s = window.setTimeout(() => setStalled(true), NEXT_ROUND_DELAY * 1000 + 3000);
+    return () => {
+      clearInterval(t);
+      clearTimeout(s);
+    };
+  }, [isRoundOver, state.round_number]);
+
+  // Конец раунда: карты лежат на столе, потом улетают в биту справа
+  const [collect, setCollect] = useState<CollectPhase>("none");
+  const [flyTo, setFlyTo] = useState<Map<number, React.CSSProperties>>(new Map());
+  const cardEls = useRef<Map<number, HTMLDivElement>>(new Map());
+  const pileRef = useRef<HTMLDivElement>(null);
+  const bankRef = useRef<HTMLDivElement>(null);
+  const [flyingCoins, setFlyingCoins] = useState<FlyingCoins | null>(null);
+  const [coinsLanded, setCoinsLanded] = useState(false);
+  const tableCountRef = useRef(0);
+  tableCountRef.current = state.table_cards.length;
+
+  useEffect(() => {
+    if (!isRoundOver) {
+      setCollect("none");
+      setFlyingCoins(null);
+      setCoinsLanded(false);
+      return;
+    }
+    const n = Math.max(tableCountRef.current, 1);
+    const t1 = window.setTimeout(() => setCollect("measure"), COLLECT_AFTER_MS);
+    const t2 = window.setTimeout(
+      () => setCollect("done"),
+      COLLECT_AFTER_MS + COLLECT_FLIGHT_MS + COLLECT_STAGGER_MS * (n - 1) + 80
+    );
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isRoundOver, state.round_number]);
+
+  // Перед полётом меряем, куда лететь каждой карте: в центр стопки биты
+  useLayoutEffect(() => {
+    if (collect !== "measure") return;
+    const pile = pileRef.current?.getBoundingClientRect();
+    const next = new Map<number, React.CSSProperties>();
+    if (pile) {
+      const px = pile.left + pile.width / 2;
+      const py = pile.top + pile.height / 2;
+      tableCards.forEach((pc, i) => {
+        const el = cardEls.current.get(pc.id);
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        next.set(pc.id, {
+          "--bx": `${px - (r.left + r.width / 2)}px`,
+          "--by": `${py - (r.top + r.height / 2)}px`,
+          "--br": `${((pc.id * 37) % 30) - 15}deg`,
+          "--delay": `${i * COLLECT_STAGGER_MS}ms`,
+          "--dur": `${COLLECT_FLIGHT_MS}ms`,
+        } as React.CSSProperties);
+      });
+    }
+    setFlyTo(next);
+
+    // Монеты банка летят к аватару победителя
+    const bank = lastRound?.bank ?? 0;
+    const stage = bankRef.current?.querySelector(".coin-stage")?.getBoundingClientRect();
+    const avatar =
+      lastRound?.winnerId != null
+        ? document
+            .querySelector(`[data-avatar-id="${lastRound.winnerId}"]`)
+            ?.getBoundingClientRect()
+        : undefined;
+    if (bank > 0 && stage && avatar) {
+      const from = { x: stage.left + stage.width / 2, y: stage.top + stage.height * 0.8 };
+      const to = { x: avatar.left + avatar.width / 2, y: avatar.top + avatar.height / 2 };
+      const n = coinCountFor(bank);
+      const coins = Array.from({ length: n }, (_, i) => ({
+        dx: to.x - from.x + (((i * 29) % 13) - 6),
+        dy: to.y - from.y + (((i * 17) % 9) - 4),
+        // Дуга: монеты подлетают вверх (к игроку снизу — повыше)
+        arc: -60 - ((i * 23) % 50) - (to.y > from.y ? 40 : 0),
+        delay: i * COIN_STAGGER_MS,
+        spin: ((i * 41) % 2 ? 1 : -1) * (360 + ((i * 53) % 360)),
+      }));
+      setFlyingCoins({ from, to, coins, landAt: COIN_FLIGHT_MS + COIN_STAGGER_MS * (n - 1) });
+    }
+
+    // Кадр паузы: браузер фиксирует исходное положение, и transition срабатывает
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setCollect("flying"));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [collect]);
+
+  // Карты раунда, которые ещё лежат на столе, в биту не считаем
+  const roundClosed = state.round_status === "finished";
+  const cardsStillOnTable = roundClosed && collect !== "done" ? state.table_cards.length : 0;
+  const discardShown = Math.max((state.discard_count ?? 0) - cardsStillOnTable, 0);
+  const hideTableCards = isRoundOver && collect === "done";
+
+  // Карты победителя раунда подсвечиваем, пока они лежат на столе
+  const winnerId = isRoundOver ? lastRound?.winnerId ?? null : null;
+
+  // Банк лежит на столе, пока монеты не полетели к победителю
+  const coinsGone = collect === "flying" || collect === "done";
+  const bankShown = isRoundOver ? (coinsGone ? 0 : lastRound?.bank ?? 0) : state.ante;
+
+  useEffect(() => {
+    if (!flyingCoins) return;
+    const t = window.setTimeout(() => setCoinsLanded(true), flyingCoins.landAt);
+    return () => clearTimeout(t);
+  }, [flyingCoins]);
+  const winnerCardId =
+    winnerId === null
+      ? null
+      : state.table_cards
+          .filter((pc) => pc.player_id === winnerId)
+          .reduce<PlayerCard | null>(
+            (best, pc) => (!best || pc.card.power > best.card.power ? pc : best),
+            null
+          )?.id ?? null;
+
+  // Сервер присылает карты стола от новой к старой. Показываем по порядку
+  // выкладывания: новая карта встаёт справа и не сдвигает уже лежащие
+  const tableCards = [...state.table_cards].reverse();
 
   const allPlayers: Player[] = [state.player, ...state.other_players];
   const nicknameById = new Map(allPlayers.map((p) => [p.id, p.nickname]));
@@ -66,17 +254,43 @@ export function GameTable({
     return style;
   }
 
-  const tableCardStyles = state.table_cards.map(flyStyle);
+  const tableCardStyles = tableCards.map(flyStyle);
   tableSeeded.current = true;
-
-  function handlePlayCard(pc: PlayerCard) {
-    if (!canAct) return;
-    onPlayCard(pc.id, pc.card.id);
-  }
 
   return (
     <div className="game-table">
       <Garland />
+
+      {flyingCoins && isRoundOver && (
+        <div className="coin-flight" aria-hidden="true">
+          {flyingCoins.coins.map((c, i) => (
+            <span
+              key={i}
+              className="flying-coin"
+              style={
+                {
+                  left: `${flyingCoins.from.x}px`,
+                  top: `${flyingCoins.from.y}px`,
+                  "--dx": `${c.dx}px`,
+                  "--dy": `${c.dy}px`,
+                  "--arc": `${c.arc}px`,
+                  "--spin": `${c.spin}deg`,
+                  "--delay": `${c.delay}ms`,
+                  "--dur": `${COIN_FLIGHT_MS}ms`,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+          {coinsLanded && (
+            <span
+              className="coin-win-gain"
+              style={{ left: `${flyingCoins.to.x}px`, top: `${flyingCoins.to.y}px` }}
+            >
+              +{lastRound?.bank}
+            </span>
+          )}
+        </div>
+      )}
       <PoleDancer side="left" />
       <PoleDancer side="right" />
 
@@ -92,14 +306,23 @@ export function GameTable({
             className={[
               "opponent",
               p.is_ready ? "ready" : "",
-              state.current_player_id === p.id ? "active-turn" : "",
+              roundActive && contenders.has(p.id) && !flipped.has(p.id)
+                ? "active-turn"
+                : "",
               p.connected ? "" : "offline",
               p.folded ? "folded" : "",
             ]
               .filter(Boolean)
               .join(" ")}
           >
-            <div className="avatar">{p.nickname[0]?.toUpperCase()}</div>
+            <div
+              className={
+                coinsLanded && winnerId === p.id ? "avatar avatar-win" : "avatar"
+              }
+              data-avatar-id={p.id}
+            >
+              {p.nickname[0]?.toUpperCase()}
+            </div>
             <div className="player-meta">
               <span className="name">
                 {p.nickname} {p.is_ready && "✓"}
@@ -108,12 +331,41 @@ export function GameTable({
                 ★ {p.score} · ставка {p.bet}
               </span>
               <span className="cards-left">
-                {p.folded ? "сбросил карты" : `карт: ${p.cards_left}`}
+                {p.folded
+                  ? "выбыл"
+                  : !roundActive
+                    ? `карт: ${p.cards_left}`
+                    : flipped.has(p.id)
+                      ? "✓ открыл карту"
+                      : contenders.has(p.id)
+                        ? "думает…"
+                        : "ждёт переигровку"}
                 {!p.connected && " · нет связи"}
               </span>
             </div>
-            {state.current_player_id === p.id && (
-              <span className="turn-dot" title="Ходит сейчас" />
+            {/* Стопка соперника рубашкой вверх — как у основного игрока */}
+            <div
+              className={[
+                "opp-stack",
+                roundActive && contenders.has(p.id) && !flipped.has(p.id) ? "can-flip" : "",
+                p.cards_left === 0 ? "empty" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              title={`Карт в стопке: ${p.cards_left}`}
+              aria-label={`Стопка ${p.nickname}: ${p.cards_left} карт`}
+            >
+              {Array.from({ length: Math.min(p.cards_left, 6) }).map((_, i, arr) => (
+                <span
+                  key={i}
+                  className="card card-back stack-layer"
+                  style={{ "--layer": arr.length - 1 - i } as React.CSSProperties}
+                />
+              ))}
+              <span className="stack-count">{p.cards_left}</span>
+            </div>
+            {roundActive && contenders.has(p.id) && !flipped.has(p.id) && (
+              <span className="turn-dot" title="Ещё не открыл карту" />
             )}
           </div>
         ))}
@@ -125,35 +377,91 @@ export function GameTable({
       {/* Середина: стол */}
       <div className="table-area">
         <div className="table-center">
-          <div className="table-info">
-            <span className="round-info">Раунд {state.round_number || 1}</span>
-            {state.current_power !== null && (
-              <span className="round-info">
-                Старшая сила: {state.current_power}
-              </span>
-            )}
-          </div>
+          {/* Две колонки фиксированной ширины: слева раунд, итог и банк,
+              справа карты. Размеры зарезервированы — вёрстка не прыгает */}
+          <div className="table-row">
+            <div className="table-side">
+              <div className="table-info">
+                <span className="round-info">Раунд {state.round_number || 1}</span>
+                {roundActive && state.current_power !== null && (
+                  <span className="round-info">
+                    Старшая: {state.current_power}
+                  </span>
+                )}
+              </div>
 
-          <CoinPile amount={state.ante} />
+              <div className="round-status" role="status">
+                {isRoundOver ? (
+                  <div className="round-result">
+                    <span className="round-result-line">
+                      {lastRound?.winner ? (
+                        <>
+                          🏆 <strong>{lastRound.winner}</strong> забирает{" "}
+                          <strong>{lastRound.bank}</strong>
+                        </>
+                      ) : (
+                        "Банк никому не достался"
+                      )}
+                    </span>
+                    {countdown > 0 ? (
+                      <span className="round-countdown">
+                        Новый раунд через <strong>{countdown}</strong>…
+                      </span>
+                    ) : !stalled ? (
+                      <span className="round-countdown">Раздаём…</span>
+                    ) : (
+                      // Запасной путь, если сервер не смог раздать сам
+                      <button className="btn btn-primary btn-small" onClick={onStartRound}>
+                        Раздать
+                      </button>
+                    )}
+                  </div>
+                ) : state.is_tiebreak && roundActive ? (
+                  <p className="tiebreak-note">
+                    Переигровка: открывают{" "}
+                    {[...contenders].map((id) => nicknameById.get(id)).join(", ")}
+                  </p>
+                ) : null}
+              </div>
 
-          {state.is_tiebreak && (
-            <p className="tiebreak-note">Равные карты — переигровка</p>
-          )}
+              <div ref={bankRef} className="table-bank">
+                <CoinPile amount={bankShown} />
+              </div>
+            </div>
 
-          {state.table_cards.length > 0 ? (
+            <div className="table-cards-slot">
+          {state.table_cards.length > 0 && !hideTableCards ? (
             <div className="played-cards">
-              {state.table_cards.map((pc, i) => (
+              {tableCards.map((pc, i) => (
                 <div
                   key={pc.id}
-                  className={tableCardStyles[i] ? "played-card fly-in" : "played-card"}
-                  style={tableCardStyles[i] ?? undefined}
+                  ref={(el) => {
+                    if (el) cardEls.current.set(pc.id, el);
+                    else cardEls.current.delete(pc.id);
+                  }}
+                  className={
+                    collect === "flying" && isRoundOver
+                      ? "played-card to-bita"
+                      : tableCardStyles[i]
+                        ? "played-card fly-in"
+                        : "played-card"
+                  }
+                  style={
+                    collect === "flying" && isRoundOver
+                      ? flyTo.get(pc.id)
+                      : tableCardStyles[i] ?? undefined
+                  }
                 >
                   <Card
                     name={pc.card.name}
                     suit={pc.card.suit}
                     value={pc.card.value}
                     power={pc.card.power}
-                    highlight={pc.player_id === state.leader_player_id}
+                    highlight={
+                      isRoundOver
+                        ? pc.id === winnerCardId
+                        : pc.player_id === state.leader_player_id
+                    }
                   />
                   <span className="played-owner">
                     {pc.player_id ? nicknameById.get(pc.player_id) : ""}
@@ -161,18 +469,31 @@ export function GameTable({
                 </div>
               ))}
             </div>
+          ) : hideTableCards ? (
+            <p className="waiting">Карты ушли в биту</p>
           ) : (
             <p className="waiting">
-              {isFinished ? "Партия окончена" : "Стол пуст — сделай первый ход"}
+              {isFinished ? "Партия окончена" : "Стол пуст — открой верхнюю карту стопки"}
             </p>
           )}
+            </div>
+          </div>
         </div>
+
+        <DiscardPile ref={pileRef} count={discardShown} />
       </div>
 
       {/* Низ: мой игрок + рука */}
       <div className="bottom-area">
         <div className="my-player">
-          <div className="avatar primary">
+          <div
+            className={
+              coinsLanded && winnerId === myPlayer.id
+                ? "avatar primary avatar-win"
+                : "avatar primary"
+            }
+            data-avatar-id={myPlayer.id}
+          >
             {myPlayer.nickname[0]?.toUpperCase()}
           </div>
           <div className="player-meta">
@@ -182,98 +503,56 @@ export function GameTable({
               {myPlayer.cards_left}
             </span>
           </div>
-          {isMyTurn && !isFinished && (
-            <span className="turn-badge">Твой ход!</span>
+          {canFlip && <span className="turn-badge">Открой карту!</span>}
+          {roundActive && iFlipped && (
+            <span className="waiting-turn">Ждём остальных…</span>
           )}
-          {!isMyTurn && state.current_player_id && !isFinished && (
-            <span className="waiting-turn">
-              Ходит {nicknameById.get(state.current_player_id) ?? "игрок"}...
-            </span>
+          {roundActive && !iAmIn && !myPlayer.folded && (
+            <span className="waiting-turn">Переигровка без тебя…</span>
           )}
-          {myPlayer.folded && <span className="waiting-turn">Ты сбросил карты</span>}
+          {myPlayer.folded && <span className="waiting-turn">Ты выбыл из раунда</span>}
         </div>
 
-        {myPlayer.cards_left === 0 && !isFinished && (
-          <p className="waiting">Карт на руках нет</p>
-        )}
-
-        {state.my_cards.length > 0 && (
-          <div className="my-hand">
-            {state.my_cards.map((pc) => {
-              const tooWeak =
-                state.current_power !== null &&
-                !state.is_tiebreak &&
-                pc.card.power <= state.current_power;
-              return (
-                <Card
-                  key={pc.id}
-                  name={pc.card.name}
-                  suit={pc.card.suit}
-                  value={pc.card.value}
-                  power={pc.card.power}
-                  disabled={!canAct || tooWeak}
-                  onClick={() => handlePlayCard(pc)}
+        <div className="deck-area">
+          {myPlayer.cards_left > 0 ? (
+            <button
+              type="button"
+              className={[
+                "card-stack",
+                canFlip ? "can-flip" : "",
+                shuffling ? "shuffling" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={handleFlip}
+              disabled={!canFlip}
+              title={canFlip ? "Открыть верхнюю карту" : "Сейчас открывать нельзя"}
+              aria-label={`Стопка: ${myPlayer.cards_left} карт рубашкой вверх`}
+            >
+              {Array.from({ length: Math.min(myPlayer.cards_left, 6) }).map((_, i, arr) => (
+                <span
+                  key={i}
+                  className="card card-back stack-layer"
+                  style={{ "--layer": arr.length - 1 - i } as React.CSSProperties}
                 />
-              );
-            })}
-          </div>
-        )}
-
-        <div className="game-actions">
-          <button
-            className="btn btn-secondary"
-            onClick={onPass}
-            disabled={!canAct}
-            title="Сбросить все карты и выйти из раунда"
-          >
-            Сбросить карты
-          </button>
-          {state.current_power !== null && !state.is_tiebreak && (
-            <span className="hint">
-              Нужна карта сильнее {state.current_power}
-            </span>
+              ))}
+              <span className="stack-count">{myPlayer.cards_left}</span>
+            </button>
+          ) : (
+            <p className="waiting">Карт в стопке нет</p>
           )}
+
+          <button
+            type="button"
+            className="btn btn-secondary shuffle-btn"
+            onClick={handleShuffle}
+            disabled={myPlayer.cards_left < 2 || shuffling || isFinished}
+            title="Перемешать свою стопку"
+          >
+            🔀 Перемешать
+          </button>
         </div>
       </div>
-
-      {isRoundOver && (
-        <div className="result-overlay">
-          <div className="result-box">
-            <h2>Раунд {state.round_number} окончен</h2>
-            {lastRound && (
-              <p>
-                {lastRound.winner ? (
-                  <>
-                    Банк <strong>{lastRound.bank}</strong> забирает{" "}
-                    <strong>{lastRound.winner}</strong>
-                  </>
-                ) : (
-                  "Банк никому не достался"
-                )}
-              </p>
-            )}
-            <ul>
-              {allPlayers
-                .slice()
-                .sort((a, b) => b.score - a.score)
-                .map((p) => (
-                  <li key={p.id}>
-                    <span>{p.nickname}</span>
-                    <span className="score">★ {p.score}</span>
-                  </li>
-                ))}
-            </ul>
-            <div className="waiting-actions">
-              <button className="btn btn-primary" onClick={onStartRound}>
-                Продолжить
-              </button>
-              <button className="btn btn-secondary" onClick={onDisconnect}>
-                Выйти
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {isFinished && (
         <div className="result-overlay">

@@ -1426,3 +1426,739 @@ body {
   color: #7a5200;
   text-shadow: 0 1px 0 #fff3b0, 0 -1px 0 rgba(0, 0, 0, 0.35);
 }
+
+/* ====== Список комнат в лобби ====== */
+.room-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.room-refresh {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 0 4px;
+}
+.room-refresh:hover:not(:disabled) { opacity: 1; }
+.room-refresh:disabled { cursor: wait; opacity: 0.4; }
+.room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.room-list-empty {
+  margin: 8px;
+  font-size: 13px;
+  opacity: 0.7;
+  text-align: center;
+}
+.room-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.room-item:hover { background: rgba(255, 255, 255, 0.12); }
+.room-item.active {
+  border-color: #f1c232;
+  background: rgba(241, 194, 50, 0.15);
+}
+.room-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.room-meta {
+  flex-shrink: 0;
+  font-size: 12px;
+  opacity: 0.75;
+  font-family: monospace;
+}
+
+/* ====== Стопка карт рубашкой вверх ====== */
+.deck-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 12px 0 4px;
+}
+.card-stack {
+  position: relative;
+  width: 80px;
+  height: 112px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: default;
+}
+.card-stack .stack-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  /* Нижние листы чуть сдвинуты, чтобы было видно стопку */
+  transform: translate(calc(var(--layer) * 2px), calc(var(--layer) * -2px));
+  transition: transform 0.2s ease;
+}
+.card-stack.can-flip { cursor: pointer; }
+.card-stack.can-flip .stack-layer:last-of-type {
+  box-shadow: 0 0 0 2px #f1c232, 0 0 18px 4px rgba(241, 194, 50, 0.55);
+  animation: stack-pulse 1.1s ease-in-out infinite alternate;
+}
+.card-stack.can-flip:hover .stack-layer:last-of-type {
+  transform: translate(0, -10px) rotate(-2deg);
+}
+.card-stack:disabled { opacity: 0.85; }
+.stack-count {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 13px;
+  background: #0d3b1e;
+  border: 2px solid #f1c232;
+  color: #fff;
+  font: 700 13px/22px sans-serif;
+  z-index: 2;
+}
+@keyframes stack-pulse {
+  to { box-shadow: 0 0 0 2px #ffe082, 0 0 26px 8px rgba(241, 194, 50, 0.75); }
+}
+
+/* Перемешивание: листы разлетаются и собираются обратно */
+.card-stack.shuffling .stack-layer {
+  animation: stack-shuffle 0.6s ease-in-out;
+}
+.card-stack.shuffling .stack-layer:nth-of-type(odd) { animation-direction: reverse; }
+@keyframes stack-shuffle {
+  0%, 100% { transform: translate(calc(var(--layer) * 2px), calc(var(--layer) * -2px)); }
+  25% { transform: translate(-46px, 0) rotate(-12deg); }
+  50% { transform: translate(46px, -4px) rotate(10deg); }
+  75% { transform: translate(-20px, 0) rotate(-4deg); }
+}
+.shuffle-btn { white-space: nowrap; }
+
+/* Только что открытая карта переворачивается лицом вверх в полёте */
+.played-card.fly-in .card {
+  animation: card-flip-open 0.55s ease-out both;
+}
+@keyframes card-flip-open {
+  0%   { transform: rotateY(180deg); filter: brightness(0.4); }
+  60%  { filter: brightness(0.4); }
+  100% { transform: rotateY(0); filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-stack .stack-layer,
+  .played-card.fly-in .card { animation: none !important; }
+}
+
+/* Итог раунда: плашка над картами, стол остаётся виден */
+.round-result-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 18px;
+  margin: 6px auto 10px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(241, 194, 50, 0.6);
+  box-shadow: 0 0 18px rgba(241, 194, 50, 0.25);
+  color: #fff;
+  font-size: 15px;
+  animation: banner-in 0.3s ease-out;
+}
+.round-countdown { opacity: 0.85; }
+.round-countdown strong {
+  display: inline-block;
+  min-width: 1ch;
+  color: #f1c232;
+  font-size: 18px;
+}
+.btn-small { padding: 6px 14px; font-size: 14px; }
+@keyframes banner-in {
+  from { opacity: 0; transform: translateY(-6px); }
+}
+
+/* ====== Код комнаты + кнопки «поделиться» справа столбиком ====== */
+.code-row {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 16px;
+}
+.code-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.copy-btn {
+  padding: 6px;
+  line-height: 0;
+}
+.social-share {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.social-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+.social-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.social-btn svg { fill: currentColor; flex-shrink: 0; }
+.social-tg { background: #229ed9; }
+.social-vk { background: #0077ff; }
+.social-vk-mark {
+  font: 800 11px/16px sans-serif;
+  width: 16px;
+  text-align: center;
+  letter-spacing: -0.5px;
+}
+@media (max-width: 420px) {
+  .code-row { flex-wrap: wrap; justify-content: center; }
+}
+
+/* ====== Крестик «Выйти» в окне ожидания ====== */
+.waiting-box { position: relative; }
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--danger, #e53935);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.modal-close:hover { filter: brightness(1.15); transform: scale(1.08); }
+.modal-close:active { transform: scale(0.94); }
+.modal-close svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+/* Код комнаты по центру своей части строки, на одной линии с кнопками */
+.code-row { align-items: center; }
+.code-main {
+  flex: 1;
+  justify-content: center;
+}
+
+/* ====== Подсказка «что делать дальше» под банком ====== */
+.waiting-box .next-steps {
+  list-style: none;
+  margin: 4px auto 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 340px;
+  text-align: left;
+}
+.waiting-box .next-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 14px;
+  opacity: 0.65;
+}
+.next-steps .step-mark {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2px solid currentColor;
+}
+.waiting-box .next-steps li.done { opacity: 0.55; text-decoration: line-through; }
+.next-steps li.done .step-mark { background: #2e7d32; border-color: #2e7d32; color: #fff; }
+.waiting-box .next-steps li.current {
+  opacity: 1;
+  background: rgba(241, 194, 50, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(241, 194, 50, 0.6);
+  font-weight: 600;
+}
+.next-steps li.current .step-mark { color: #f1c232; }
+
+/* ====== Бита: стопка сыгранных карт справа от стола ====== */
+.table-area { position: relative; }
+.discard-pile {
+  position: absolute;
+  top: 50%;
+  right: calc(clamp(130px, 12vw, 190px) + 80px);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.discard-stack {
+  position: relative;
+  width: 80px;
+  height: 112px;
+}
+.discard-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  transform: translate(calc(var(--layer) * 1.5px), calc(var(--layer) * -1.5px)) rotate(var(--tilt));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.discard-empty {
+  position: absolute;
+  inset: 0;
+  border: 2px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+}
+.discard-label {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+.discard-label strong {
+  display: inline-block;
+  margin-left: 4px;
+  color: #f1c232;
+  animation: discard-bump 0.4s ease-out;
+}
+@keyframes discard-bump {
+  0% { transform: scale(1.6); }
+  100% { transform: scale(1); }
+}
+
+/* Полёт карт со стола в биту */
+.played-card.to-bita {
+  position: relative;
+  z-index: 6;
+  animation: none;
+  transform: translate(var(--bx, 0), var(--by, 0)) rotate(var(--br, 0deg)) scale(0.92);
+  opacity: 0.9;
+  transition:
+    transform 0.75s cubic-bezier(0.45, 0, 0.25, 1),
+    opacity 0.75s ease-in;
+}
+.played-card.to-bita .played-owner { opacity: 0; transition: opacity 0.2s; }
+.played-card.to-bita .card { animation: none; }
+
+@media (max-width: 1100px) {
+  .discard-pile { right: 16px; }
+}
+@media (max-width: 700px) {
+  .discard-pile { transform: translateY(-50%) scale(0.75); right: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .played-card.to-bita { transition: none; }
+}
+
+/* ====== Перелёт в биту v2: по одной, с переворотом рубашкой вверх, по дуге ======
+   Ключевые кадры вместо transition: запускаются всегда, даже если в тот же
+   момент снимается анимация появления карты. */
+.played-card.to-bita {
+  position: relative;
+  z-index: 6;
+  opacity: 1;
+  transition: none;
+  transform: none;
+  animation: to-bita-path var(--dur, 800ms) cubic-bezier(0.5, 0, 0.3, 1) var(--delay, 0ms) both;
+  will-change: transform;
+}
+@keyframes to-bita-path {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); }
+  /* Карту приподнимает со стола */
+  22%  { transform: translate(calc(var(--bx) * 0.08), -34px) rotate(calc(var(--br) * 0.3)) scale(1.12); }
+  /* Дуга к бите */
+  60%  { transform: translate(calc(var(--bx) * 0.65), calc(var(--by) * 0.5 - 40px)) rotate(calc(var(--br) * 0.8)) scale(1.02); }
+  100% { transform: translate(var(--bx), var(--by)) rotate(var(--br)) scale(0.95); }
+}
+
+/* Переворот рубашкой вверх в полёте: сжатие по ширине, подмена лица рубашкой */
+.played-card.to-bita .card {
+  position: relative;
+  animation: to-bita-flip var(--dur, 800ms) ease-in-out var(--delay, 0ms) both;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45);
+}
+.played-card.to-bita .card::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid #1a3a8a;
+  background: repeating-linear-gradient(45deg, #2563eb, #2563eb 5px, #1d4ed8 5px, #1d4ed8 10px);
+  opacity: 0;
+  animation: to-bita-back var(--dur, 800ms) steps(1, end) var(--delay, 0ms) both;
+  z-index: 2;
+}
+.played-card.to-bita .card::after { animation: none; opacity: 0; }
+@keyframes to-bita-flip {
+  0%, 25% { transform: scaleX(1); }
+  45%     { transform: scaleX(0.05); }
+  65%,100%{ transform: scaleX(1); }
+}
+@keyframes to-bita-back {
+  0%   { opacity: 0; }
+  45%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+.played-card.to-bita .played-owner {
+  opacity: 0;
+  transition: opacity 0.15s;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .played-card.to-bita,
+  .played-card.to-bita .card,
+  .played-card.to-bita .card::before { animation-duration: 1ms; animation-delay: 0ms; }
+}
+
+/* ====== Монеты банка летят к победителю раунда ====== */
+.coin-flight {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+.flying-coin {
+  position: fixed;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #fff3c4 0%, #f2c14e 45%, #b8860b 100%);
+  border: 1px solid #a8761a;
+  box-shadow: 0 0 10px rgba(255, 215, 106, 0.8), 0 3px 4px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  animation: coin-fly var(--dur, 900ms) cubic-bezier(0.45, 0, 0.35, 1) var(--delay, 0ms) both;
+}
+@keyframes coin-fly {
+  0%   { opacity: 0; transform: translate(0, 0) rotateY(0deg) scale(0.8); }
+  8%   { opacity: 1; }
+  /* Подскок из кучки и дуга к игроку */
+  45%  { transform: translate(calc(var(--dx) * 0.4), calc(var(--dy) * 0.4 + var(--arc))) rotateY(calc(var(--spin) * 0.5)) scale(1.1); }
+  92%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotateY(var(--spin)) scale(0.55); }
+}
+
+/* Аватар победителя вспыхивает, когда долетают монеты */
+.avatar-win {
+  animation: avatar-win 1s ease-out both;
+}
+@keyframes avatar-win {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 215, 106, 0.95); transform: scale(1); }
+  25%  { box-shadow: 0 0 0 8px rgba(255, 215, 106, 0.55); transform: scale(1.18); }
+  100% { box-shadow: 0 0 0 16px rgba(255, 215, 106, 0); transform: scale(1); }
+}
+.coin-win-gain {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  color: #ffd76a;
+  font-weight: 800;
+  font-size: 1.25rem;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+  animation: coin-win-gain 1.3s ease-out both;
+}
+@keyframes coin-win-gain {
+  0%   { opacity: 0; transform: translate(-50%, -30%) scale(0.7); }
+  20%  { opacity: 1; transform: translate(-50%, -120%) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, -260%) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flying-coin { animation-duration: 1ms; animation-delay: 0ms; }
+  .avatar-win, .coin-win-gain { animation: none; }
+}
+
+/* ====== Банк слева от карт, выровнен по вертикали ====== */
+.table-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+.table-bank .coin-pile { margin: 0; }
+.table-row > .waiting { margin: 0; }
+@media (max-width: 560px) {
+  .table-row { gap: 12px; }
+  .table-bank { transform: scale(0.85); }
+}
+
+/* ====== Стол: две колонки фиксированной ширины, без прыжков вёрстки ====== */
+.table-row {
+  display: grid;
+  grid-template-columns: 250px 330px;
+  column-gap: 28px;
+  align-items: center;
+  justify-content: center;
+}
+.table-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  height: 236px;
+  justify-content: center;
+}
+.table-side .table-info {
+  display: flex;
+  gap: 6px;
+  height: 30px;
+  align-items: center;
+  white-space: nowrap;
+}
+/* Строка статуса всегда занимает место — появление итога ничего не сдвигает */
+.round-status {
+  height: 66px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.round-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(241, 194, 50, 0.6);
+  box-shadow: 0 0 14px rgba(241, 194, 50, 0.25);
+  color: #fff;
+  font-size: 14px;
+  text-align: right;
+  animation: banner-in 0.3s ease-out;
+  max-width: 100%;
+}
+.round-result-line {
+  max-width: 226px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.round-status .tiebreak-note {
+  margin: 0;
+  text-align: right;
+  font-size: 13px;
+}
+.table-bank .coin-pile { margin: 0; align-items: flex-end; }
+
+/* Карты добавляются слева направо, уже лежащие не сдвигаются */
+.table-cards-slot {
+  min-height: 236px;
+  display: flex;
+  align-items: center;
+}
+.table-cards-slot .played-cards {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.table-cards-slot > .waiting { margin: 0; }
+
+@media (max-width: 760px) {
+  .table-row { grid-template-columns: 150px 1fr; column-gap: 12px; }
+  .table-side { height: auto; min-height: 236px; }
+  .round-result-line { max-width: 130px; white-space: normal; }
+}
+
+/* ====== Стабильная высота строк игроков: подсветка и статусы не двигают стол ====== */
+/* Рамка есть всегда (прозрачная) — подсветка хода только меняет её цвет */
+.opponent { border: 1px solid transparent; }
+.cards-left {
+  display: block;
+  height: 1.25em;
+  line-height: 1.25em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.my-player { min-height: 44px; }
+.turn-badge, .waiting-turn {
+  line-height: 20px;
+}
+
+/* ====== Строка ставки + «Готов» на всю её ширину ====== */
+.waiting-actions {
+  flex-direction: column;
+  align-items: center;
+}
+.bet-panel {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bet-panel .bet-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bet-label {
+  white-space: nowrap;
+  font-weight: 600;
+}
+.bet-stepper {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-dark);
+}
+.bet-panel .bet-stepper input {
+  width: 76px;
+  padding: 8px 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: center;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* Свои кнопки ± всегда видны, родные стрелки поля прячем */
+.bet-stepper input::-webkit-outer-spin-button,
+.bet-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bet-step {
+  width: 36px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bet-step:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
+.bet-step:disabled { opacity: 0.35; cursor: default; }
+.bet-submit { white-space: nowrap; }
+.btn-ready {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.btn-ready.is-ready {
+  background: #2e7d32;
+  border-color: #43a047;
+  color: #fff;
+}
+.waiting-actions > .btn-primary { width: auto; }
+@media (max-width: 420px) {
+  .bet-panel .bet-form { flex-wrap: wrap; justify-content: center; }
+}
+
+/* «Поставлено ✓» — в стиле нажатой «Готов ✓»: зелёная и неактивная */
+.btn-ready.is-ready,
+.bet-submit.is-done {
+  background: #2e7d32;
+  border: 1px solid #43a047;
+  color: #fff;
+}
+.bet-submit.is-done:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.bet-submit { min-width: 132px; }
+
+/* ====== Стопка соперника справа от имени (уменьшенная копия моей) ====== */
+.opp-stack {
+  position: relative;
+  flex-shrink: 0;
+  width: 42px;
+  height: 60px;
+  margin: 0 6px 0 4px;
+}
+.opp-stack .stack-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 42px;
+  height: 60px;
+  margin: 0;
+  border-width: 1.5px;
+  border-radius: 5px;
+  transform: translate(calc(var(--layer) * 1.5px), calc(var(--layer) * -1.5px));
+  cursor: default;
+}
+.opp-stack .stack-layer:hover { transform: translate(calc(var(--layer) * 1.5px), calc(var(--layer) * -1.5px)); }
+.opp-stack.can-flip .stack-layer:last-of-type {
+  box-shadow: 0 0 0 1.5px #f1c232, 0 0 10px 2px rgba(241, 194, 50, 0.5);
+  animation: stack-pulse 1.1s ease-in-out infinite alternate;
+}
+.opp-stack .stack-count {
+  right: -9px;
+  bottom: -8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-width: 1.5px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 17px;
+  text-align: center;
+}
+.opp-stack.empty {
+  border: 1.5px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .opp-stack .stack-layer { animation: none !important; }
+}

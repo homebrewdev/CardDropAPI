@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     DB_USER: str = "carduser"
     DB_PASSWORD: str = "cardpass"
     DB_NAME: str = "cardgame"
+    # Файл SQLite. Тесты подменяют его через переменную окружения,
+    # чтобы не засорять рабочую базу тестовыми комнатами
+    SQLITE_PATH: str = "./cardgame.db"
 
     # Redis
     REDIS_HOST: str = "localhost"
@@ -27,7 +30,7 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         if self.DB_DIALECT == "sqlite":
-            return "sqlite+aiosqlite:///./cardgame.db"
+            return f"sqlite+aiosqlite:///{self.SQLITE_PATH}"
         return (
             f"mysql+asyncmy://{self.DB_USER}:{self.DB_PASSWORD}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"

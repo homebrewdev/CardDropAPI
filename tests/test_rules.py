@@ -55,6 +55,7 @@ async def db(engine):
 @pytest_asyncio.fixture
 def manager():
     mgr = RoomManager()
+    mgr.next_round_delay = None  # раунды в тестах стартуют явно
     yield mgr
     mgr.reset_state()
 
@@ -582,8 +583,9 @@ async def test_max_four_players_enforced_on_start(engine, db, manager):
 
 
 @pytest.mark.asyncio
-async def test_table_cleared_after_round(engine, db, manager):
-    """Старшая карта забирает банк, после раунда стол пуст"""
+async def test_table_kept_after_round(engine, db, manager):
+    """Старшая карта забирает банк; карты раунда остаются на столе до
+    следующей раздачи, чтобы игроки успели их рассмотреть"""
     session, players = await make_session(db, ["alice", "bob"])
     await seed_cards(db, list(range(2, 14)) * 4)
     connect(manager, session.join_code, players)
@@ -595,7 +597,7 @@ async def test_table_cleared_after_round(engine, db, manager):
     await manager.handle_play_card(a.id, card[1], "a1", db)
 
     # Пока раунд идёт, карта лежит на столе. Если её некому перебить,
-    # раунд закрывается сразу же, и стол уже пуст
+    # раунд закрывается сразу же
     round_obj = await manager._current_round(session.id, db)
     state = await manager._build_state(session.join_code, a.id, db)
     if round_obj.status == "active":
@@ -612,4 +614,177 @@ async def test_table_cleared_after_round(engine, db, manager):
     assert finished[-1]["bank_won"] == 200
 
     state = await manager._build_state(session.join_code, a.id, db)
+    assert [pc["card"]["id"] for pc in state["table_cards"]] == [card[1]]
+
+    # Новая раздача очищает стол
+    await manager.start_round(session.join_code, db)
+    state = await manager._build_state(session.join_code, a.id, db)
     assert state["table_cards"] == []
+
+
+# ----------------------------------------------------------------------
+# Вскрытие верхней карты стопки (без очереди ходов)
+# ----------------------------------------------------------------------
+
+async def put_on_top(db: AsyncSession, player_id: int, power: int, depth: int = 0):
+    """Подменить карту в стопке игрока на карту нужной силы и положить её
+    на позицию depth сверху (раздача случайная, нужной силы может не быть)"""
+    card = (await db.execute(select(Card).where(Card.power == power).limit(1))).scalar_one()
+    result = await db.execute(
+        select(PlayerCard)
+        .where(
+            PlayerCard.player_id == player_id,
+            PlayerCard.played_at.is_(None),
+            PlayerCard.hand_order >= 0,
+        )
+        .limit(1)
+    )
+    pc = result.scalar_one()
+    pc.card_id = card.id
+    pc.hand_order = -100 + depth
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_flip_ignores_turn_order_and_high_card_wins(engine, db, manager):
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a, b = players
+    await put_on_top(db, a.id, 5)
+    await put_on_top(db, b.id, 11)
+
+    # Первым открывает тот, чей ход не по очереди
+    await manager.handle_flip(b.id, "b1", db)
+    round_obj = await manager._current_round(session.id, db)
+    assert round_obj.status == "active"
+    with pytest.raises(GameActionError):
+        await manager.handle_flip(b.id, "b2", db)  # вторую карту нельзя
+
+    await manager.handle_flip(a.id, "a1", db)
+    await db.refresh(round_obj)
+    assert round_obj.status == "finished"
+    await db.refresh(b)
+    await db.refresh(a)
+    assert b.score > a.score
+
+
+@pytest.mark.asyncio
+async def test_flip_tie_only_tied_players_flip_again(engine, db, manager):
+    session, players = await make_session(db, ["alice", "bob", "carol"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a, b, c = players
+    await put_on_top(db, a.id, 9)
+    await put_on_top(db, a.id, 3, depth=1)
+    await put_on_top(db, b.id, 9)
+    await put_on_top(db, b.id, 12, depth=1)
+    await put_on_top(db, c.id, 4)
+
+    for p, cid in ((a, "a1"), (b, "b1"), (c, "c1")):
+        await manager.handle_flip(p.id, cid, db)
+
+    round_obj = await manager._current_round(session.id, db)
+    assert round_obj.status == "active"
+    status = await manager._flip_status(session, round_obj, db)
+    assert sorted(status["contenders"]) == sorted([a.id, b.id])
+    assert status["flipped"] == []
+    with pytest.raises(GameActionError):
+        await manager.handle_flip(c.id, "c2", db)  # проигравший не переигрывает
+
+    await manager.handle_flip(a.id, "a2", db)
+    await manager.handle_flip(b.id, "b2", db)
+    await db.refresh(round_obj)
+    assert round_obj.status == "finished"
+    await db.refresh(a)
+    await db.refresh(b)
+    assert b.score > a.score
+
+
+@pytest.mark.asyncio
+async def test_shuffle_keeps_cards(engine, db, manager):
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a = players[0]
+    before = sorted(x[1] for x in await hand_cards(db, a.id))
+    await manager.handle_shuffle(a.id, db)
+    after = sorted(x[1] for x in await hand_cards(db, a.id))
+    assert before == after
+
+
+@pytest.mark.asyncio
+async def test_hands_persist_between_rounds(engine, db, manager):
+    """Карты раздаются один раз на партию: следующий раунд их не пересдаёт"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a, b = players
+    await put_on_top(db, a.id, 5)
+    await put_on_top(db, b.id, 11)
+    before_a = {x[0] for x in await hand_cards(db, a.id)}
+
+    await manager.handle_flip(a.id, "a1", db)
+    await manager.handle_flip(b.id, "b1", db)
+    round_obj = await manager._current_round(session.id, db)
+    assert round_obj.status == "finished"
+
+    await manager.start_round(session.join_code, db)
+    round2 = await manager._current_round(session.id, db)
+    assert round2.round_number == 2 and round2.status == "active"
+    hand_a = await hand_cards(db, a.id)
+    hand_b = await hand_cards(db, b.id)
+    assert len(hand_a) == 12 and len(hand_b) == 12
+    # Это те же карты, что были розданы в начале партии (минус открытая)
+    assert {x[0] for x in hand_a} < before_a
+
+
+@pytest.mark.asyncio
+async def test_discard_count_grows_after_round(engine, db, manager):
+    """Бита: карты раунда попадают в неё только после завершения раунда"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a, b = players
+    await put_on_top(db, a.id, 5)
+    await put_on_top(db, b.id, 11)
+
+    await manager.handle_flip(a.id, "a1", db)
+    state = await manager._build_state(session.join_code, a.id, db)
+    assert state["discard_count"] == 0  # карта ещё в игре
+
+    await manager.handle_flip(b.id, "b1", db)
+    state = await manager._build_state(session.join_code, a.id, db)
+    assert state["round_status"] == "finished"
+    assert state["discard_count"] == 2
+
+    await manager.start_round(session.join_code, db)
+    state = await manager._build_state(session.join_code, a.id, db)
+    assert state["discard_count"] == 2 and state["table_cards"] == []
+
+
+@pytest.mark.asyncio
+async def test_game_autostarts_when_everyone_bet(engine, db, manager):
+    """Кнопки «Начать игру» нет: партия стартует, когда все поставили"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    a, b = players
+    for p in players:
+        p.bet = 0
+    await db.commit()
+
+    await manager.handle_set_bet(a.id, 150, db)
+    await db.refresh(session)
+    assert session.status == "waiting"  # bob ещё не поставил
+
+    await manager.handle_set_bet(b.id, 50, db)
+    await db.refresh(session)
+    assert session.status == "playing"
+    assert session.ante == 200
+    assert len(await hand_cards(db, a.id)) == 13
