@@ -1,6 +1,7 @@
 ﻿"""Тесты карточных правил: раздача 13 карт, очерёдность хода, сравнение по силе,
 переигровка при равенстве, банк, сдача и завершение партии."""
 
+import asyncio
 import random
 
 import pytest
@@ -787,4 +788,77 @@ async def test_game_autostarts_when_everyone_bet(engine, db, manager):
     await db.refresh(session)
     assert session.status == "playing"
     assert session.ante == 200
+    assert len(await hand_cards(db, a.id)) == 13
+
+
+@pytest.mark.asyncio
+async def test_autostart_with_concurrent_bets(engine, db, manager):
+    """Ставки двух игроков почти одновременно, в разных сессиях БД:
+    банк = сумме ставок, партия стартует, ставки не перезаписываются"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    for p in players:
+        p.bet = 0
+    await db.commit()
+    a, b = players
+
+    maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as db_a, maker() as db_b:
+        # Обе сессии заранее «видят» игроков со ставкой 0 — как в реальном WS
+        for s in (db_a, db_b):
+            (await s.execute(select(Player).where(Player.session_id == session.id))).scalars().all()
+        await asyncio.gather(
+            manager.handle_set_bet(a.id, 150, db_a),
+            manager.handle_set_bet(b.id, 50, db_b),
+        )
+
+    await db.refresh(session)
+    await db.refresh(a)
+    await db.refresh(b)
+    assert session.status == "playing"
+    assert (a.bet, b.bet) == (150, 50)
+    assert session.ante == 200
+
+
+@pytest.mark.asyncio
+async def test_new_game_resets_balances_and_returns_to_waiting(engine, db, manager):
+    """«Новая игра» после окончания партии: баланс снова стартовый,
+    ставки сброшены, комната ждёт ставок; раунды нумеруются с 1"""
+    from app.rooms.room_manager import STARTING_BALANCE
+
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+    a, b = players
+    await put_on_top(db, a.id, 5)
+    await put_on_top(db, b.id, 11)
+    await manager.handle_flip(a.id, "a1", db)
+    await manager.handle_flip(b.id, "b1", db)
+
+    # Партия окончена (как после последнего раунда), балансы разные
+    await db.refresh(session)
+    session.status = "finished"
+    session.winner_nickname = "bob"
+    await db.commit()
+    await db.refresh(b)
+    assert b.score != STARTING_BALANCE
+
+    await manager.start_round(session.join_code, db)  # кнопка «Новая игра»
+    await db.refresh(session)
+    assert session.status == "waiting"
+    assert session.ante == 0 and session.winner_nickname is None
+    for p in players:
+        await db.refresh(p)
+        assert (p.score, p.bet, bool(p.is_ready)) == (STARTING_BALANCE, 0, False)
+        assert await hand_cards(db, p.id) == []
+
+    # Все поставили — новая партия стартует сама, раунд снова первый
+    await manager.handle_set_bet(a.id, 100, db)
+    await manager.handle_set_bet(b.id, 100, db)
+    await db.refresh(session)
+    assert session.status == "playing"
+    round_obj = await manager._current_round(session.id, db)
+    assert round_obj.round_number == 1
     assert len(await hand_cards(db, a.id)) == 13

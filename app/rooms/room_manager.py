@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import (
     Session, Player, Card, Deck, PlayerCard, Round, RoundAction,
 )
+from app.avatars import AvatarError, avatar_url, parse_avatar
 from app.rooms.deck import build_session_deck
 from app.schemas.schemas import (
     PlayerCardResponse,
@@ -24,6 +25,8 @@ CARDS_PER_PLAYER = 13
 MIN_PLAYERS = 2
 MAX_PLAYERS = 4
 DEFAULT_ANTE = 100
+# Баланс игрока в начале каждой партии (как Player.score default в модели)
+STARTING_BALANCE = 1000
 MIN_ANTE = 1
 MAX_ANTE = 10000
 
@@ -80,6 +83,10 @@ class RoomManager:
         # None — автостарт выключен (тесты сами вызывают start_round)
         self.next_round_delay: Optional[float] = NEXT_ROUND_DELAY
         self._next_round_tasks: Dict[str, asyncio.Task] = {}
+        # Ставки одной комнаты обрабатываются по очереди: иначе два почти
+        # одновременных «Поставить» не видят ставки друг друга (банк и
+        # автостарт считаются по устаревшим данным)
+        self._bet_locks: Dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Подключение / отключение
@@ -167,8 +174,13 @@ class RoomManager:
             )
 
             # Ушёл единственный, кто ещё не поставил, — остальные могут начинать
+            started = False
             if session and session.status == "waiting":
-                await self._maybe_autostart(join_code, db)
+                started = await self._maybe_autostart(join_code, db)
+            # Оставшимся — свежий снапшот: иначе ушедший до следующего хода
+            # числится «в сети» (connected), а его выбывание не видно
+            if not started and join_code in self.rooms:
+                await self._broadcast_states(join_code, db)
 
     async def broadcast(self, player_id: int, data: dict):
         """Отправить всем в комнате игрока, кроме него"""
@@ -235,7 +247,8 @@ class RoomManager:
         result = await db.execute(
             select(Round)
             .where(Round.session_id == session_id)
-            .order_by(Round.round_number.desc())
+            # По порядку создания: номера раундов начинаются заново в каждой партии
+            .order_by(Round.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -280,6 +293,18 @@ class RoomManager:
     # Ставки и старт партии
     # ------------------------------------------------------------------
 
+    async def handle_set_avatar(self, player_id: int, data_url: Optional[str], db: AsyncSession):
+        """Сохранить аватарку игрока (data URL) или убрать её (None/пусто)"""
+        if data_url:
+            try:
+                parse_avatar(data_url)
+            except AvatarError as e:
+                raise GameActionError(str(e), "invalid_avatar")
+        await db.execute(
+            update(Player).where(Player.id == player_id).values(avatar=data_url or None)
+        )
+        await db.commit()
+
     async def handle_set_bet(self, player_id: int, bet: int, db: AsyncSession) -> dict:
         """Изменить собственную ставку.
 
@@ -297,14 +322,17 @@ class RoomManager:
                 f"Ставка должна быть от {MIN_ANTE} до {MAX_ANTE}", "invalid_bet"
             )
 
-        await db.execute(update(Player).where(Player.id == player_id).values(bet=bet))
-        await self._recalc_ante(session, db)
+        lock = self._bet_locks.setdefault(session.join_code, asyncio.Lock())
+        async with lock:
+            await db.execute(update(Player).where(Player.id == player_id).values(bet=bet))
+            await db.commit()
+            await self._recalc_ante(session, db)
 
-        await self._broadcast(
-            session.join_code,
-            {"type": "bets_updated", "player_id": player_id, "bet": bet},
-        )
-        await self._maybe_autostart(session.join_code, db)
+            await self._broadcast(
+                session.join_code,
+                {"type": "bets_updated", "player_id": player_id, "bet": bet},
+            )
+            await self._maybe_autostart(session.join_code, db)
         return {"type": "bets_updated", "player_id": player_id, "bet": bet}
 
     async def _maybe_autostart(self, join_code: str, db: AsyncSession) -> bool:
@@ -317,11 +345,14 @@ class RoomManager:
         connected = self._connected_ids(join_code)
         if len(connected) < MIN_PLAYERS:
             return False
+        # Колонки, а не объекты: свежие ставки из базы, а не из кеша сессии
         result = await db.execute(
-            select(Player).where(Player.session_id == session.id, Player.id.in_(connected))
+            select(Player.id, Player.bet).where(
+                Player.session_id == session.id, Player.id.in_(connected)
+            )
         )
-        players = result.scalars().all()
-        if len(players) < MIN_PLAYERS or any(not p.bet for p in players):
+        rows = result.all()
+        if len(rows) < MIN_PLAYERS or any(not bet for _, bet in rows):
             return False
         try:
             await self.start_round(join_code, db)
@@ -335,9 +366,12 @@ class RoomManager:
 
     async def _recalc_ante(self, session: Session, db: AsyncSession):
         """Банк = сумма ставок всех игроков сессии (до старта партии)"""
-        result = await db.execute(select(Player).where(Player.session_id == session.id))
-        players = result.scalars().all()
-        session.ante = sum(p.bet or 0 for p in players)
+        # Агрегат, а не объекты Player: объекты из кеша сессии могут хранить
+        # старые ставки (expire_on_commit=False)
+        result = await db.execute(
+            select(func.coalesce(func.sum(Player.bet), 0)).where(Player.session_id == session.id)
+        )
+        session.ante = int(result.scalar_one())
         await db.commit()
 
     async def handle_ready(self, player_id: int, db: AsyncSession) -> dict:
@@ -377,17 +411,29 @@ class RoomManager:
         continuing = session.status == "playing"
 
         if session.status == "finished":
-            # Новая игра в той же комнате: обнуляем банкроллы прошлой партии
+            # «Новая игра»: всем снова стартовый баланс, ставки и «Готов»
+            # сброшены, комната возвращается в ожидание. Партия начнётся сама,
+            # когда все поставят (_maybe_autostart), как в первый раз.
             await db.execute(
                 update(Player)
                 .where(Player.session_id == session.id)
-                .values(score=0, bet=0, folded=0, is_ready=1)
+                .values(score=STARTING_BALANCE, bet=0, folded=0, is_ready=0)
             )
+            # Руки прошлой партии больше не нужны
+            result = await db.execute(
+                select(PlayerCard)
+                .join(Player, Player.id == PlayerCard.player_id)
+                .where(Player.session_id == session.id, PlayerCard.played_at.is_(None))
+            )
+            for pc in result.scalars().all():
+                await db.delete(pc)
             session.ante = 0
             session.winner_nickname = None
+            session.games_played = 0
             session.status = "waiting"
             await db.commit()
-            await db.refresh(session)
+            await self._broadcast_states(join_code, db)
+            return {"type": "new_game"}
 
         connected = self._connected_ids(join_code)
         if len(connected) < MIN_PLAYERS:
@@ -401,10 +447,13 @@ class RoomManager:
             )
 
         # Играют только подключённые и ещё «богатые» игроки
+        # populate_existing: перечитать игроков из базы, а не взять из кеша
+        # сессии — иначе ставки других игроков могут оказаться устаревшими
         result = await db.execute(
             select(Player)
             .where(Player.session_id == session.id, Player.id.in_(connected))
             .order_by(Player.id)
+            .execution_options(populate_existing=True)
         )
         candidates = list(result.scalars().all())
         # В первой партии у всех score = 0 — играют все подключённые.
@@ -444,7 +493,8 @@ class RoomManager:
         await db.commit()
 
         last_round = await self._current_round(session.id, db)
-        next_number = (last_round.round_number + 1) if last_round else 1
+        # Новая партия нумерует раунды с 1, следующий раунд партии — +1
+        next_number = (last_round.round_number + 1) if (last_round and continuing) else 1
 
         # Первым ходит победитель прошлой партии, иначе — первый по id
         result = await db.execute(
@@ -1402,7 +1452,7 @@ class RoomManager:
             payload = {
                 "id": p.id,
                 "nickname": p.nickname,
-                "avatar": p.avatar,
+                "avatar": avatar_url(p.id, p.avatar),
                 "score": p.score,
                 "bet": p.bet,
                 "is_ready": bool(p.is_ready),

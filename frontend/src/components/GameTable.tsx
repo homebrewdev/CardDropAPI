@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DiscardPile } from "./DiscardPile";
+import { PlayerAvatar } from "./PlayerAvatar";
 import { Card } from "./Card";
 import { CoinPile } from "./CoinPile";
 import { PoleDancer } from "./PoleDancer";
 import { Garland } from "./Garland";
 import type { GameState, Player, PlayerCard } from "../types";
+import { CoinIcon } from "./CoinIcon";
 
 interface GameTableProps {
   state: GameState;
@@ -37,6 +39,19 @@ interface FlyingCoins {
   coins: { dx: number; dy: number; arc: number; delay: number; spin: number }[];
   to: { x: number; y: number };
   landAt: number;
+}
+
+/** Ставки летят от игроков в банк в начале раунда */
+const ANTE_FLIGHT_MS = 750;
+const ANTE_PLAYER_GAP_MS = 280;
+const ANTE_COIN_GAP_MS = 45;
+
+interface AnteFlight {
+  playerId: number;
+  bet: number;
+  from: { x: number; y: number };
+  coins: { dx: number; dy: number; arc: number; delay: number; spin: number }[];
+  landAt: number; // мс от старта анимации, когда долетела последняя монета
 }
 
 function coinCountFor(bank: number): number {
@@ -110,6 +125,12 @@ export function GameTable({
   const bankRef = useRef<HTMLDivElement>(null);
   const [flyingCoins, setFlyingCoins] = useState<FlyingCoins | null>(null);
   const [coinsLanded, setCoinsLanded] = useState(false);
+  // Ставки, летящие в банк в начале раунда, и сколько уже долетело
+  const [anteFlights, setAnteFlights] = useState<AnteFlight[] | null>(null);
+  const [anteArrived, setAnteArrived] = useState(0);
+  // Раунд, для которого полёт ставок уже запущен (или не нужен). State, а не
+  // ref: банк должен знать об этом прямо в рендере, без вспышки «+сумма»
+  const [anteSeenRound, setAnteSeenRound] = useState<number | null>(null);
   const tableCountRef = useRef(0);
   tableCountRef.current = state.table_cards.length;
 
@@ -201,7 +222,70 @@ export function GameTable({
 
   // Банк лежит на столе, пока монеты не полетели к победителю
   const coinsGone = collect === "flying" || collect === "done";
-  const bankShown = isRoundOver ? (coinsGone ? 0 : lastRound?.bank ?? 0) : state.ante;
+  // Новый раунд, ставки ещё не полетели — банк пока пуст
+  const antePending =
+    roundActive && state.ante > 0 && anteSeenRound !== state.round_number;
+  const bankShown = isRoundOver
+    ? coinsGone
+      ? 0
+      : lastRound?.bank ?? 0
+    : anteFlights
+      ? anteArrived
+      : antePending
+        ? 0
+        : state.ante;
+
+  // Начало раунда: ставки игроков летят от их аватаров в банк
+  useLayoutEffect(() => {
+    if (!roundActive || state.ante <= 0) return;
+    if (anteSeenRound === state.round_number) return;
+    setAnteSeenRound(state.round_number);
+    // Анимируем только свежий раунд (стол пуст), а не переподключение посреди игры
+    if (state.table_cards.length > 0) return;
+
+    const stage = bankRef.current?.querySelector(".coin-stage")?.getBoundingClientRect();
+    if (!stage) return;
+    const to = { x: stage.left + stage.width / 2, y: stage.top + stage.height * 0.75 };
+    const payers = [state.player, ...state.other_players].filter(
+      (p) => p.bet > 0 && p.cards_left > 0
+    );
+    const flights: AnteFlight[] = [];
+    payers.forEach((p, idx) => {
+      const av = document.querySelector(`[data-avatar-id="${p.id}"]`)?.getBoundingClientRect();
+      if (!av) return;
+      const from = { x: av.left + av.width / 2, y: av.top + av.height / 2 };
+      const n = Math.min(8, Math.max(3, Math.round(2 * Math.log2(p.bet / 25 + 1))));
+      const start = idx * ANTE_PLAYER_GAP_MS;
+      const coins = Array.from({ length: n }, (_, i) => ({
+        dx: to.x - from.x + (((i * 29 + p.id) % 13) - 6),
+        dy: to.y - from.y + (((i * 17 + p.id) % 7) - 3),
+        arc: -50 - ((i * 23) % 40) - (from.y > to.y ? 30 : 0),
+        delay: start + i * ANTE_COIN_GAP_MS,
+        spin: ((i * 41) % 2 ? 1 : -1) * (360 + ((i * 53) % 360)),
+      }));
+      flights.push({
+        playerId: p.id,
+        bet: p.bet,
+        from,
+        coins,
+        landAt: start + (n - 1) * ANTE_COIN_GAP_MS + ANTE_FLIGHT_MS,
+      });
+    });
+    if (flights.length === 0) return;
+    setAnteArrived(0);
+    setAnteFlights(flights);
+  }, [roundActive, state.round_number, state.ante, anteSeenRound]);
+
+  // Ставка игрока «падает» в банк, когда долетает его последняя монета
+  useEffect(() => {
+    if (!anteFlights) return;
+    const timers = anteFlights.map((f) =>
+      window.setTimeout(() => setAnteArrived((sum) => sum + f.bet), f.landAt)
+    );
+    const end = Math.max(...anteFlights.map((f) => f.landAt)) + 150;
+    timers.push(window.setTimeout(() => setAnteFlights(null), end));
+    return () => timers.forEach(clearTimeout);
+  }, [anteFlights]);
 
   useEffect(() => {
     if (!flyingCoins) return;
@@ -261,6 +345,31 @@ export function GameTable({
     <div className="game-table">
       <Garland />
 
+      {anteFlights && (
+        <div className="coin-flight" aria-hidden="true">
+          {anteFlights.flatMap((f) =>
+            f.coins.map((c, i) => (
+              <span
+                key={`${f.playerId}-${i}`}
+                className="flying-coin ante-coin"
+                style={
+                  {
+                    left: `${f.from.x}px`,
+                    top: `${f.from.y}px`,
+                    "--dx": `${c.dx}px`,
+                    "--dy": `${c.dy}px`,
+                    "--arc": `${c.arc}px`,
+                    "--spin": `${c.spin}deg`,
+                    "--delay": `${c.delay}ms`,
+                    "--dur": `${ANTE_FLIGHT_MS}ms`,
+                  } as React.CSSProperties
+                }
+              />
+            ))
+          )}
+        </div>
+      )}
+
       {flyingCoins && isRoundOver && (
         <div className="coin-flight" aria-hidden="true">
           {flyingCoins.coins.map((c, i) => (
@@ -315,20 +424,29 @@ export function GameTable({
               .filter(Boolean)
               .join(" ")}
           >
-            <div
-              className={
-                coinsLanded && winnerId === p.id ? "avatar avatar-win" : "avatar"
-              }
-              data-avatar-id={p.id}
-            >
-              {p.nickname[0]?.toUpperCase()}
+            {/* Аватарка + постоянный индикатор «в сети» в её углу */}
+            <div className="avatar-wrap">
+              <div
+                className={
+                  coinsLanded && winnerId === p.id ? "avatar avatar-win" : "avatar"
+                }
+                data-avatar-id={p.id}
+              >
+                <PlayerAvatar nickname={p.nickname} src={p.avatar} />
+              </div>
+              <span
+                className={p.connected ? "presence online" : "presence offline"}
+                title={p.connected ? "В сети" : "Нет связи"}
+                aria-label={p.connected ? "В сети" : "Нет связи"}
+                role="img"
+              />
             </div>
             <div className="player-meta">
               <span className="name">
                 {p.nickname} {p.is_ready && "✓"}
               </span>
               <span className="score">
-                ★ {p.score} · ставка {p.bet}
+                <CoinIcon /> {p.score} · ставка {p.bet}
               </span>
               <span className="cards-left">
                 {p.folded
@@ -364,9 +482,6 @@ export function GameTable({
               ))}
               <span className="stack-count">{p.cards_left}</span>
             </div>
-            {roundActive && contenders.has(p.id) && !flipped.has(p.id) && (
-              <span className="turn-dot" title="Ещё не открыл карту" />
-            )}
           </div>
         ))}
         {state.other_players.length === 0 && (
@@ -494,23 +609,14 @@ export function GameTable({
             }
             data-avatar-id={myPlayer.id}
           >
-            {myPlayer.nickname[0]?.toUpperCase()}
+            <PlayerAvatar nickname={myPlayer.nickname} src={myPlayer.avatar} />
           </div>
           <div className="player-meta">
             <span className="name">{myPlayer.nickname}</span>
             <span className="score">
-              ★ {myPlayer.score} · ставка {myPlayer.bet} · карт:{" "}
-              {myPlayer.cards_left}
+              <CoinIcon /> {myPlayer.score} · ставка {myPlayer.bet}
             </span>
           </div>
-          {canFlip && <span className="turn-badge">Открой карту!</span>}
-          {roundActive && iFlipped && (
-            <span className="waiting-turn">Ждём остальных…</span>
-          )}
-          {roundActive && !iAmIn && !myPlayer.folded && (
-            <span className="waiting-turn">Переигровка без тебя…</span>
-          )}
-          {myPlayer.folded && <span className="waiting-turn">Ты выбыл из раунда</span>}
         </div>
 
         <div className="deck-area">
@@ -542,15 +648,28 @@ export function GameTable({
             <p className="waiting">Карт в стопке нет</p>
           )}
 
-          <button
-            type="button"
-            className="btn btn-secondary shuffle-btn"
-            onClick={handleShuffle}
-            disabled={myPlayer.cards_left < 2 || shuffling || isFinished}
-            title="Перемешать свою стопку"
-          >
-            🔀 Перемешать
-          </button>
+          {/* Статус хода над «Перемешать»; место под него зарезервировано */}
+          <div className="deck-side">
+            <div className="my-status" role="status">
+            {canFlip && <span className="turn-badge">Открой карту!</span>}
+            {roundActive && iFlipped && (
+              <span className="waiting-turn">Ждём остальных…</span>
+            )}
+            {roundActive && !iAmIn && !myPlayer.folded && (
+              <span className="waiting-turn">Переигровка без тебя…</span>
+            )}
+            {myPlayer.folded && <span className="waiting-turn">Ты выбыл из раунда</span>}
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary shuffle-btn"
+              onClick={handleShuffle}
+              disabled={myPlayer.cards_left < 2 || shuffling || isFinished}
+              title="Перемешать свою стопку"
+            >
+              🔀 Перемешать
+            </button>
+          </div>
         </div>
       </div>
 
@@ -569,7 +688,7 @@ export function GameTable({
                 .map((p) => (
                   <li key={p.id}>
                     <span>{p.nickname}</span>
-                    <span className="score">★ {p.score}</span>
+                    <span className="score"><CoinIcon /> {p.score}</span>
                   </li>
                 ))}
             </ul>

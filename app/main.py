@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.sessions import router as sessions_router
+from app.api.players import router as players_router
 from app.ws.ws_handler import router as ws_router
 from app.rooms.room_manager import RoomManager
 from app.config import get_settings
@@ -57,6 +58,7 @@ app.add_middleware(AccessLogMiddleware)
 
 # Routers
 app.include_router(sessions_router)
+app.include_router(players_router)
 app.include_router(ws_router)
 
 

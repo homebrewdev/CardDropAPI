@@ -167,6 +167,16 @@ async def websocket_join(
                         )
                         break
 
+                elif action == "set_avatar":
+                    # Аватарка: data URL картинки, уже уменьшенной клиентом
+                    avatar = data.get("avatar")
+                    async for db in get_db():
+                        await room_manager.handle_set_avatar(
+                            player.id, avatar if isinstance(avatar, str) else None, db
+                        )
+                        await room_manager.broadcast_states(join_code, db)
+                        break
+
                 elif action == "flip":
                     # Открыть верхнюю карту стопки (без очереди ходов)
                     async for db in get_db():

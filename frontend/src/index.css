@@ -2162,3 +2162,374 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .opp-stack .stack-layer { animation: none !important; }
 }
+
+/* ====== Аватарка игрока на главном окне ====== */
+.lobby-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.lobby-header .title { margin: 0; }
+.avatar-picker {
+  position: relative;
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+}
+.avatar-picker-circle {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-dark);
+  border: 2px solid rgba(232, 168, 56, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.avatar-picker-circle svg {
+  width: 80%;
+  height: 80%;
+  fill: rgba(255, 255, 255, 0.35);
+}
+.avatar-picker-circle img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* «+» внизу по центру круга */
+.avatar-picker-add {
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--bg-panel);
+  background: var(--accent);
+  color: #1a1a1a;
+  font: 800 16px/1 sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.avatar-picker-add:hover { filter: brightness(1.12); transform: translateX(-50%) scale(1.12); }
+.avatar-picker-add:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.lobby-header { margin-bottom: 10px; }
+
+/* Кружок аватарки — кнопка (клик меняет картинку) */
+button.avatar-picker-circle {
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+button.avatar-picker-circle:hover { border-color: var(--accent); }
+/* Картинка уже вписана в круг при обработке — показываем как есть */
+.avatar-picker-circle img {
+  object-fit: contain;
+}
+.avatar-picker-error {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translate(-50%, 10px);
+  white-space: nowrap;
+  font-size: 11px;
+  color: #ff8a80;
+}
+
+/* ====== Аватарки игроков (картинка с сервера вместо буквы) ====== */
+.avatar { overflow: hidden; flex-shrink: 0; }
+.player-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.avatar:has(.player-avatar-img) { background: var(--bg-dark); }
+.avatar-sm {
+  width: 26px;
+  height: 26px;
+  font-size: 0.8rem;
+}
+.player-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ====== Окно выбора области аватарки ====== */
+.cropper-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 10, 16, 0.7);
+}
+.cropper-modal {
+  background: var(--bg-panel);
+  border: 1px solid rgba(232, 168, 56, 0.35);
+  border-radius: 14px;
+  padding: 20px 22px;
+  max-width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.cropper-modal h2 {
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+  color: var(--accent);
+  text-align: center;
+}
+.cropper-body {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.cropper-view {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background:
+    repeating-conic-gradient(#2a3442 0% 25%, #222b37 0% 50%) 50% / 20px 20px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.cropper-view:active { cursor: grabbing; }
+.cropper-view img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  pointer-events: none;
+}
+/* Затемнение вокруг круга: всё вне круга — тень огромного радиуса */
+.cropper-mask {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 9999px rgba(4, 10, 16, 0.62);
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+.cropper-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.cropper-preview-label { font-size: 12px; opacity: 0.7; white-space: nowrap; }
+.cropper-preview {
+  border-radius: 50%;
+  border: 2px solid rgba(232, 168, 56, 0.55);
+  background: var(--bg-dark);
+  box-sizing: content-box;
+}
+.cropper-zoom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+  font-weight: 700;
+}
+.cropper-zoom input { flex: 1; accent-color: var(--accent); }
+.cropper-hint {
+  margin: 0 0 14px;
+  font-size: 12px;
+  opacity: 0.6;
+  text-align: center;
+}
+.cropper-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+@media (max-width: 460px) {
+  .cropper-body { flex-direction: column; }
+}
+
+/* Монеты ставок, летящие от игроков в банк в начале раунда */
+.ante-coin {
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+}
+
+/* ====== Статус хода над кнопкой «Перемешать» ====== */
+.deck-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.my-status {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/* ====== Значок баланса: маленькая стопка монет вместо ★ ====== */
+.coin-icon {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 12px;
+  margin-right: 2px;
+  vertical-align: -1px;
+}
+.coin-icon-coin {
+  position: absolute;
+  left: 0;
+  width: 14px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 40% 35%, #ffe9a3 0%, #f2c14e 45%, #c9921f 100%);
+  border: 0.5px solid #a8761a;
+  box-shadow: 0 1px 0 #9a6a14;
+}
+.coin-icon-coin:nth-child(1) { bottom: 0; }
+.coin-icon-coin:nth-child(2) { bottom: 3px; left: 1px; }
+.coin-icon-coin:nth-child(3) { bottom: 6px; left: -0.5px; }
+
+/* ====== Главное окно: ник под подзаголовком, вкладки одной карточкой ====== */
+.lobby-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  background: none;
+  padding: 0;
+}
+.lobby-nick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lobby-nick span {
+  white-space: nowrap;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.lobby-nick input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: var(--bg-dark);
+  color: var(--text);
+  font-size: 15px;
+}
+.lobby-nick input:focus { outline: none; border-color: var(--accent); }
+
+/* Карточка: вкладки-«ушки» сливаются с панелью */
+.lobby-card {
+  border: 1px solid rgba(232, 168, 56, 0.35);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.lobby-card .lobby-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+.lobby-card .lobby-tab {
+  padding: 11px 8px;
+  border: none;
+  border-bottom: 1px solid rgba(232, 168, 56, 0.35);
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.lobby-card .lobby-tab + .lobby-tab { border-left: 1px solid rgba(232, 168, 56, 0.2); }
+.lobby-card .lobby-tab:hover:not(.active) { color: #fff; background: rgba(255, 255, 255, 0.04); }
+/* Активная вкладка без нижней границы — открыта в панель под ней */
+.lobby-card .lobby-tab.active {
+  background: var(--bg-panel);
+  color: var(--accent);
+  font-weight: 700;
+  border-bottom-color: transparent;
+}
+.lobby-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--bg-panel);
+}
+
+/* Обе панели в одной ячейке — размер карточки не зависит от вкладки */
+.lobby-panels { display: grid; }
+.lobby-panel {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  visibility: hidden;
+}
+.lobby-panel.active { visibility: visible; }
+/* Фиксированная высота списка — панель не растёт от числа комнат */
+.lobby-panel .room-list {
+  height: 132px;
+  max-height: none;
+}
+.lobby-submit { width: 100%; }
+
+/* Поля внутри вкладок (раньше стилизовались через .form) */
+.lobby-form { text-align: left; }
+.lobby-panel .field input {
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: var(--bg-dark);
+  color: var(--text);
+  font-size: 1rem;
+}
+.lobby-panel .field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ====== Индикатор «в сети» в углу аватарки соперника ====== */
+.avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.presence {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #12241a; /* «вырез» под цвет фона карточки соперника */
+  transition: background 0.3s ease;
+}
+.presence.online {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
+}
+.presence.offline {
+  background: #6b7280;
+}

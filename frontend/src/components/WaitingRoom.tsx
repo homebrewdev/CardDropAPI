@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { GameState } from "../types";
+import { CoinIcon } from "./CoinIcon";
 
 interface WaitingRoomProps {
   state: GameState;
@@ -47,7 +48,7 @@ export function WaitingRoom({ state, lastResult, onReady, onSetBet, onStart, onL
                 {p.id === me.id && " (ты)"}
               </span>
               <span className="pl-stats">
-                ★ {p.score} · ставка {p.bet || DEFAULT_BET}
+                <CoinIcon /> {p.score} · ставка {p.bet || DEFAULT_BET}
                 {!p.connected && " · не в сети"}
               </span>
             </li>

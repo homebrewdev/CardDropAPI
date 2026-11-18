@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.avatars import avatar_url
 from app.db import get_db
 from app.models.models import Session, Player
 from app.rooms.deck import build_session_deck
@@ -110,7 +111,7 @@ async def list_sessions(
                 PlayerResponse(
                     id=p.id,
                     nickname=p.nickname,
-                    avatar=p.avatar,
+                    avatar=avatar_url(p.id, p.avatar),
                     score=p.score,
                     is_ready=bool(p.is_ready),
                 )
@@ -151,7 +152,7 @@ async def get_session_by_code(
             PlayerResponse(
                 id=p.id,
                 nickname=p.nickname,
-                avatar=p.avatar,
+                avatar=avatar_url(p.id, p.avatar),
                 score=p.score,
                 bet=p.bet,
                 is_ready=bool(p.is_ready),
@@ -191,7 +192,7 @@ async def get_session(
             PlayerResponse(
                 id=p.id,
                 nickname=p.nickname,
-                avatar=p.avatar,
+                avatar=avatar_url(p.id, p.avatar),
                 score=p.score,
                 is_ready=bool(p.is_ready),
             )

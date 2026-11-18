@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     SmallInteger,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -63,7 +64,8 @@ class Player(Base):
         nullable=False,
     )
     nickname: Mapped[str] = mapped_column(String(30), nullable=False)
-    avatar: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # data URL картинки (см. app/avatars.py); в VARCHAR(255) не помещается
+    avatar: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Баланс игрока. Стартовый капитал ненулевой: игроки с нулём в партию не допускаются
     score: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
     # Ставка игрока в текущей партии (анте). Меняется только до старта партии:

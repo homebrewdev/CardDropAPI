@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GameTable, type LastRound } from "./components/GameTable";
+import { PlayerAvatar } from "./components/PlayerAvatar";
+import { loadAvatar } from "./components/AvatarPicker";
 import { Lobby } from "./components/Lobby";
 import { DemoTable } from "./components/DemoTable";
 import { SocialShareButtons } from "./components/ShareButton";
@@ -7,6 +9,7 @@ import { CopyCodeButton } from "./components/CopyCodeButton";
 import { CoinPile } from "./components/CoinPile";
 import type { GameState, SessionInfo, WSMessage } from "./types";
 import { gameSocket, CLOSE_REASONS } from "./ws";
+import { CoinIcon } from "./components/CoinIcon";
 import {
   createSession as apiCreateSession,
   getSessionByCode,
@@ -21,6 +24,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lastRound, setLastRound] = useState<LastRound | null>(null);
+  // Какую аватарку и какому игроку уже отправили на сервер
+  const avatarSentKey = useRef<string | null>(null);
 
   // Подписка одна на всё время жизни приложения: переподписка при каждом
   // входе копила бы обработчики и дублировала сообщения
@@ -28,6 +33,17 @@ function App() {
     const offMessage = gameSocket.onMessage((msg: WSMessage) => {
       if (msg.type === "game_state") {
         const state = msg as unknown as GameState;
+        // Своя аватарка (выбрана на главном окне) уходит на сервер один раз
+        // на игрока и картинку — дальше её видят все по ссылке из снапшота
+        const local = loadAvatar();
+        if (local) {
+          const key = `${state.player.id}:${local.length}:${local.slice(-40)}`;
+          if (avatarSentKey.current !== key) {
+            if (gameSocket.send({ action: "set_avatar", avatar: local })) {
+              avatarSentKey.current = key;
+            }
+          }
+        }
         setGameState(state);
         setSession(state.session);
         setError(null);
@@ -208,22 +224,28 @@ function App() {
 
                 <ul className="players-list">
                   <li>
-                    <span>
+                    <span className="player-line">
+                      <span className="avatar avatar-sm">
+                        <PlayerAvatar nickname={gameState.player.nickname} src={gameState.player.avatar} />
+                      </span>
                       {gameState.player.nickname}{" "}
                       {gameState.player.is_ready ? "✓" : "○"}
                     </span>
                     <span className="score">
-                      ★ {gameState.player.score} · ставка {gameState.player.bet}
+                      <CoinIcon /> {gameState.player.score} · ставка {gameState.player.bet}
                     </span>
                   </li>
                   {gameState.other_players.map((p) => (
                     <li key={p.id} className={p.connected ? "" : "offline"}>
-                      <span>
+                      <span className="player-line">
+                        <span className="avatar avatar-sm">
+                          <PlayerAvatar nickname={p.nickname} src={p.avatar} />
+                        </span>
                         {p.nickname} {p.is_ready ? "✓" : "○"}
                         {!p.connected && " (нет связи)"}
                       </span>
                       <span className="score">
-                        ★ {p.score} · ставка {p.bet}
+                        <CoinIcon /> {p.score} · ставка {p.bet}
                       </span>
                     </li>
                   ))}
