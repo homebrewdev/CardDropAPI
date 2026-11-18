@@ -1,4 +1,5 @@
 import type { WSMessage } from "./types";
+import { wsUrl } from "./server";
 
 type MessageHandler = (msg: WSMessage) => void;
 type CloseHandler = (event: CloseEvent) => void;
@@ -37,11 +38,12 @@ export class GameSocket {
     // иначе остаётся второй сокет и события приходят дважды
     this.teardownSocket();
 
-    // Относительный URL — Vite проксирует /ws к бэкенду (vite.config.ts)
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    this.url = `${proto}//${location.host}/ws/join/${encodeURIComponent(
-      this.lastJoinCode
-    )}?nickname=${encodeURIComponent(this.lastNickname)}`;
+    // Адрес сервера — из server.ts (тот же сайт через Vite-прокси или IP сервера)
+    this.url = wsUrl(
+      `/ws/join/${encodeURIComponent(this.lastJoinCode)}?nickname=${encodeURIComponent(
+        this.lastNickname
+      )}`
+    );
 
     const socket = new WebSocket(this.url);
     this.ws = socket;

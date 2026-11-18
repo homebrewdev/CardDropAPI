@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
@@ -16,6 +19,8 @@
     "vite": "^8.3.6"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   }

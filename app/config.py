@@ -20,7 +20,12 @@ class Settings(BaseSettings):
 
     # App
     SECRET_KEY: str = "change-this-in-production"
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Vite в разработке + Android-приложение (Capacitor открывает игру
+    # со своего «сайта» http(s)://localhost или capacitor://localhost)
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost,https://localhost,capacitor://localhost"
+    )
 
     # Logging
     LOG_DIR: str = "log"

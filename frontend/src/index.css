@@ -2649,3 +2649,113 @@ button.avatar-picker-circle:hover { border-color: var(--accent); }
 @media (max-width: 700px) {
   .chat-panel { width: calc(100vw - 32px); height: 26vh; top: auto; bottom: 12px; }
 }
+
+/* ====== Адрес сервера на главном окне ====== */
+.server-settings {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+}
+.server-toggle {
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+}
+.server-toggle span { color: rgba(255, 255, 255, 0.8); font-family: Consolas, monospace; }
+.server-toggle:hover { color: rgba(255, 255, 255, 0.85); }
+.server-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.server-form label { opacity: 0.7; }
+.server-row { display: flex; gap: 6px; }
+.server-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: var(--bg-dark);
+  color: var(--text);
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+.server-row input:focus { outline: none; border-color: var(--accent); }
+.server-status { margin: 0; }
+.server-status.error { color: #ff8a80; }
+.server-status.info { opacity: 0.7; }
+.server-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.server-link {
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ====== Сворачиваемый чат ====== */
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.chat-collapse {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat-collapse:hover { background: rgba(255, 255, 255, 0.18); }
+/* Свёрнутый чат — кнопка слева сверху, под кнопками гирлянды */
+.chat-fab {
+  position: fixed;
+  z-index: 110;
+  left: 16px;
+  top: 60px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid rgba(232, 168, 56, 0.45);
+  border-radius: 999px;
+  background: rgba(10, 20, 28, 0.85);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.chat-fab:hover { background: rgba(20, 34, 44, 0.95); }
+.chat-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #e53935;
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+  animation: chat-badge-pop 0.3s ease-out;
+}
+@keyframes chat-badge-pop {
+  from { transform: scale(1.6); }
+}
+
+/* Кнопки-монетки танцовщиц скрываются вместе с танцовщицами на узких
+   экранах. Правило стоит в конце: выше по файлу .pd-tip-btn получил
+   display:flex (значок $) и перебивал прежнее скрытие */
+@media (max-width: 1100px) {
+  .pd-tip-btn { display: none; }
+}

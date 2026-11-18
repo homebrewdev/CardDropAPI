@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DemoTable } from "./DemoTable";
 import { AvatarPicker } from "./AvatarPicker";
+import { ServerSettings } from "./ServerSettings";
 import { listSessions } from "../api";
 import type { Session } from "../types";
 
@@ -245,6 +246,9 @@ export function Lobby({ onCreate, onJoin }: LobbyProps) {
               </div>
             </div>
           </form>
+
+          {/* Адрес игрового сервера: для Android-приложения и игры по Wi-Fi */}
+          <ServerSettings />
         </div>
       </div>
     </div>
