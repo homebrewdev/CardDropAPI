@@ -7,9 +7,10 @@ import { DemoTable } from "./components/DemoTable";
 import { SocialShareButtons } from "./components/ShareButton";
 import { CopyCodeButton } from "./components/CopyCodeButton";
 import { CoinPile } from "./components/CoinPile";
-import type { GameState, SessionInfo, WSMessage } from "./types";
+import type { ChatMessage, GameState, SessionInfo, WSMessage } from "./types";
 import { gameSocket, CLOSE_REASONS } from "./ws";
 import { CoinIcon } from "./components/CoinIcon";
+import { ChatPanel } from "./components/ChatPanel";
 import {
   createSession as apiCreateSession,
   getSessionByCode,
@@ -24,6 +25,9 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lastRound, setLastRound] = useState<LastRound | null>(null);
+  // Чат комнаты: история приходит при входе, дальше — по сообщению.
+  // Сбрасывается только при выходе из комнаты, не при новой партии
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   // Какую аватарку и какому игроку уже отправили на сервер
   const avatarSentKey = useRef<string | null>(null);
 
@@ -50,6 +54,11 @@ function App() {
         setScreen(
           state.session_status === "waiting" ? "waiting" : "playing"
         );
+      } else if (msg.type === "chat_history") {
+        setChat((msg.messages as ChatMessage[]) ?? []);
+      } else if (msg.type === "chat") {
+        const m = msg.message as ChatMessage;
+        setChat((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m].slice(-100)));
       } else if (msg.type === "round_finished") {
         setLastRound({
           winner: (msg.winner_nickname as string | null) ?? null,
@@ -85,6 +94,7 @@ function App() {
   }, []);
 
   function createSession(name: string, maxPlayers: number, nick: string) {
+    setChat([]);
     setError(null);
     setNotice(null);
     // createSession уже разбирает detail из ответа, поэтому ошибка доходит
@@ -100,6 +110,7 @@ function App() {
 
   async function joinSession(joinCode: string, nick: string) {
     const code = joinCode.trim().toUpperCase();
+    setChat([]);
     setError(null);
     setNotice(null);
     setGameState(null);
@@ -139,8 +150,13 @@ function App() {
     gameSocket.send({ action: "start" });
   }
 
+  function handleChatSend(text: string): boolean {
+    return gameSocket.send({ action: "chat", text });
+  }
+
   function handleDisconnect() {
     gameSocket.disconnect();
+    setChat([]);
     setScreen("lobby");
     setSession(null);
     setGameState(null);
@@ -303,6 +319,15 @@ function App() {
           onStartRound={handleStartRound}
           lastRound={lastRound}
           onDisconnect={handleDisconnect}
+        />
+      )}
+
+      {/* Чат комнаты: всегда открыт — и в ожидании, и за столом */}
+      {(screen === "waiting" || screen === "playing") && (
+        <ChatPanel
+          messages={chat}
+          myId={gameState?.player.id ?? null}
+          onSend={handleChatSend}
         />
       )}
     </div>

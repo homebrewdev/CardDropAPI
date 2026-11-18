@@ -167,6 +167,12 @@ async def websocket_join(
                         )
                         break
 
+                elif action == "chat":
+                    # Сообщение в чат комнаты (рассылает room_manager)
+                    async for db in get_db():
+                        await room_manager.handle_chat(player.id, data.get("text"), db)
+                        break
+
                 elif action == "set_avatar":
                     # Аватарка: data URL картинки, уже уменьшенной клиентом
                     avatar = data.get("avatar")

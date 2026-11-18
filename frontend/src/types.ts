@@ -76,6 +76,16 @@ export interface GameState {
   timestamp: string;
 }
 
+export interface ChatMessage {
+  id: number;
+  player_id: number;
+  nickname: string;
+  /** Ссылка на аватарку автора на момент отправки (или null) */
+  avatar: string | null;
+  text: string;
+  ts: string;
+}
+
 export interface WSMessage {
   type: string;
   [key: string]: unknown;

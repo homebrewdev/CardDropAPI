@@ -862,3 +862,37 @@ async def test_new_game_resets_balances_and_returns_to_waiting(engine, db, manag
     round_obj = await manager._current_round(session.id, db)
     assert round_obj.round_number == 1
     assert len(await hand_cards(db, a.id)) == 13
+
+
+@pytest.mark.asyncio
+async def test_chat_broadcast_history_and_new_game(engine, db, manager):
+    """Чат: сообщение уходит всем в комнате, текст чистится, история
+    переживает «Новую игру», антиспам ограничивает частоту"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    a, b = players
+
+    msg = await manager.handle_chat(a.id, "  привет\n  <b>всем</b>  ", db)
+    assert msg["text"] == "привет <b>всем</b>"  # без переводов строк, HTML как текст
+    assert msg["nickname"] == "alice"
+    got_b = [m for m in manager._player_to_room[b.id].websocket.sent if m.get("type") == "chat"]
+    assert got_b and got_b[-1]["message"]["id"] == msg["id"]
+
+    with pytest.raises(GameActionError):
+        await manager.handle_chat(a.id, "   ", db)
+
+    # Партия окончена → «Новая игра»: история чата на месте
+    await manager.start_round(session.join_code, db, ante=100)
+    await db.refresh(session)
+    session.status = "finished"
+    await db.commit()
+    await manager.start_round(session.join_code, db)
+    assert [m["text"] for m in manager._chat[session.join_code]] == ["привет <b>всем</b>"]
+
+    # Антиспам: не больше CHAT_RATE_LIMIT сообщений за окно
+    from app.rooms.room_manager import CHAT_RATE_LIMIT
+    for i in range(CHAT_RATE_LIMIT):
+        await manager.handle_chat(b.id, f"m{i}", db)
+    with pytest.raises(GameActionError):
+        await manager.handle_chat(b.id, "лишнее", db)

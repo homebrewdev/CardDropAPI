@@ -1,8 +1,10 @@
 ﻿import asyncio
 import logging
 import random
+import time
+from collections import deque
 from datetime import datetime, timezone
-from typing import List, Optional, Dict
+from typing import Deque, List, Optional, Dict
 
 from fastapi import WebSocket
 from sqlalchemy import delete, func, select, update
@@ -36,6 +38,12 @@ NO_LEADER_ORDER = "highest"
 
 # Сколько последних сыгранных карт показывать на столе
 TABLE_CARDS_LIMIT = 8
+
+# Чат комнаты
+CHAT_MAX_LEN = 300       # символов в сообщении
+CHAT_HISTORY = 50        # сколько последних сообщений помнит комната
+CHAT_RATE_LIMIT = 5      # не больше N сообщений...
+CHAT_RATE_WINDOW = 10.0  # ...за столько секунд от одного игрока
 
 # Сколько секунд показывать карты раунда перед автоматической новой раздачей
 NEXT_ROUND_DELAY = 4.0
@@ -87,6 +95,11 @@ class RoomManager:
         # одновременных «Поставить» не видят ставки друг друга (банк и
         # автостарт считаются по устаревшим данным)
         self._bet_locks: Dict[str, asyncio.Lock] = {}
+        # Чат комнаты: последние сообщения (живут вместе с комнатой, а не с
+        # партией — «Новая игра» историю не сбрасывает) и антиспам по игрокам
+        self._chat: Dict[str, Deque[dict]] = {}
+        self._chat_times: Dict[int, Deque[float]] = {}
+        self._chat_seq = 0
 
     # ------------------------------------------------------------------
     # Подключение / отключение
@@ -125,6 +138,12 @@ class RoomManager:
             # Снапшот всем, а не только вошедшему: иначе первый игрок
             # не увидит второго, пока не случится другой игровой event
             await self._broadcast_states(join_code, db)
+
+            # Вошедшему — недавняя переписка комнаты
+            await self.send_to(
+                player.id,
+                {"type": "chat_history", "messages": list(self._chat.get(join_code, ()))},
+            )
 
             return conn
 
@@ -1512,3 +1531,48 @@ class RoomManager:
         self.rooms.clear()
         self._player_to_room.clear()
         self._processed_actions.clear()
+        self._chat.clear()
+        self._chat_times.clear()
+
+    # ------------------------------------------------------------------
+    # Чат комнаты
+    # ------------------------------------------------------------------
+
+    async def handle_chat(self, player_id: int, text: object, db: AsyncSession) -> dict:
+        """Сообщение в чат комнаты: проверка, антиспам, рассылка всем"""
+        if not isinstance(text, str):
+            raise GameActionError("Пустое сообщение", "chat_empty")
+        # Схлопываем переводы строк и лишние пробелы — чат однострочный
+        text = " ".join(text.split())
+        if not text:
+            raise GameActionError("Пустое сообщение", "chat_empty")
+        if len(text) > CHAT_MAX_LEN:
+            text = text[:CHAT_MAX_LEN]
+
+        conn = self._player_to_room.get(player_id)
+        if not conn:
+            raise GameActionError("Вы не в комнате", "not_in_room")
+
+        now = time.monotonic()
+        times = self._chat_times.setdefault(player_id, deque())
+        while times and now - times[0] > CHAT_RATE_WINDOW:
+            times.popleft()
+        if len(times) >= CHAT_RATE_LIMIT:
+            raise GameActionError("Слишком часто — подождите пару секунд", "chat_rate_limited")
+        times.append(now)
+
+        result = await db.execute(select(Player).where(Player.id == player_id))
+        player = result.scalar_one()
+        self._chat_seq += 1
+        message = {
+            "id": self._chat_seq,
+            "player_id": player.id,
+            "nickname": player.nickname,
+            "avatar": avatar_url(player.id, player.avatar),
+            "text": text,
+            "ts": utcnow().isoformat(),
+        }
+        history = self._chat.setdefault(conn.join_code, deque(maxlen=CHAT_HISTORY))
+        history.append(message)
+        await self._broadcast(conn.join_code, {"type": "chat", "message": message})
+        return message

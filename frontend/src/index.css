@@ -2533,3 +2533,119 @@ button.avatar-picker-circle:hover { border-color: var(--accent); }
 .presence.offline {
   background: #6b7280;
 }
+
+/* ====== Чат комнаты: слева сверху до танцовщицы, всегда открыт ====== */
+.chat-panel {
+  position: fixed;
+  z-index: 110; /* над модалкой ожидания (100) */
+  left: 16px;
+  top: 60px; /* под кнопками гирлянды */
+  /* вниз — до верха танцовщицы (её высота: .pole-dancer) */
+  bottom: calc(min(78vh, 560px) + 12px);
+  width: 280px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: rgba(10, 20, 28, 0.82);
+  border: 1px solid rgba(232, 168, 56, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+}
+.chat-head {
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-empty {
+  margin: auto 0;
+  font-size: 12px;
+  opacity: 0.55;
+  text-align: center;
+}
+.chat-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.chat-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 0.7rem;
+}
+.chat-bubble {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 9px;
+  border-radius: 4px 10px 10px 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.chat-msg.mine .chat-bubble { background: rgba(232, 168, 56, 0.16); }
+.chat-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.chat-nick {
+  font-weight: 700;
+  color: #9ad1ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-msg.mine .chat-nick { color: var(--accent); }
+.chat-time { opacity: 0.5; flex-shrink: 0; }
+.chat-text {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.chat-form {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: var(--bg-dark);
+  color: var(--text);
+  font-size: 13px;
+}
+.chat-form input:focus { outline: none; border-color: var(--accent); }
+.chat-send {
+  width: 34px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #1a1a1a;
+  font-size: 14px;
+  cursor: pointer;
+}
+.chat-send:disabled { opacity: 0.4; cursor: default; }
+
+/* Без танцовщиц (узкий экран) — фиксированная высота */
+@media (max-width: 1100px) {
+  .chat-panel { bottom: auto; height: 34vh; width: 240px; }
+}
+@media (max-width: 700px) {
+  .chat-panel { width: calc(100vw - 32px); height: 26vh; top: auto; bottom: 12px; }
+}
