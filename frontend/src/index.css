@@ -1140,13 +1140,68 @@ body {
   50%      { opacity: 0.13; }
 }
 
+/* Кнопка «кинуть денег» рядом со сценой */
+.pd-tip-btn {
+  position: fixed;
+  bottom: 18px;
+  z-index: 5;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid #e8b923;
+  background: radial-gradient(circle at 35% 30%, #fff3b0, #f1c232 55%, #b8860b);
+  box-shadow: 0 0 12px rgba(241, 194, 50, 0.6);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.pd-tip-btn:hover  { transform: scale(1.1) rotate(-10deg); }
+.pd-tip-btn:active { transform: scale(0.92); }
+.pd-tip-left  { left: calc(16px + clamp(130px, 12vw, 190px)); }
+.pd-tip-right { right: calc(16px + clamp(130px, 12vw, 190px)); }
+
+/* Купюры, которыми осыпают танцовщицу */
+.pd-bills {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.pd-bill {
+  position: absolute;
+  top: 8%;
+  width: 22px;
+  height: 11px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #8fd694, #4caf50 60%, #2e7d32);
+  border: 1px solid #1b5e20;
+  color: #0d3b12;
+  font: 700 8px/9px sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  animation-name: pd-bill-fall;
+  animation-timing-function: cubic-bezier(0.3, 0.1, 0.6, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes pd-bill-fall {
+  0%   { opacity: 0; transform: translate(0, -60px) rotate(0deg); }
+  10%  { opacity: 1; }
+  35%  { transform: translate(calc(var(--drift) * -0.4), 80px) rotate(calc(var(--rot) * 0.3)); }
+  65%  { transform: translate(calc(var(--drift) * 0.6), 240px) rotate(calc(var(--rot) * 0.7)); }
+  90%  { opacity: 1; }
+  100% { opacity: 0.85; transform: translate(var(--drift), calc(min(78vh, 560px) * 0.86)) rotate(var(--rot)); }
+}
+
 /* На узких экранах танцовщицы перекрыли бы карты */
 @media (max-width: 1100px) {
-  .pole-dancer { display: none; }
+  .pole-dancer, .pd-tip-btn { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pd-slide, .pd-spin, .pd-leg, .pd-arm, .pd-spot { animation: none; }
+  .pd-bill { animation-duration: 1ms !important; }
 }
 
 /* ====== Card played onto the table ====== */
@@ -1211,4 +1266,163 @@ body {
   .played-card.fly-in,
   .played-card.fly-in .played-owner,
   .played-card.fly-in .card::after { animation: none; }
+}
+
+/* ====== Гирлянда над столом ====== */
+.garland {
+  position: relative;
+  margin: -16px -16px 4px; /* во всю ширину стола, поверх отступов */
+  padding-top: 6px;
+  height: 64px;
+}
+.garland-strip {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 6px;
+  height: 40px;
+}
+.garland-wire {
+  position: absolute;
+  inset: 0 0 auto 0;
+  width: 100%;
+  height: 30px;
+  overflow: visible;
+}
+.garland-wire path {
+  fill: none;
+  stroke: #263238;
+  stroke-width: 2;
+}
+.garland-bulb {
+  position: absolute;
+  width: 9px;
+  height: 14px;
+  margin-left: -4.5px;
+  border-radius: 50% 50% 50% 50% / 40% 40% 60% 60%;
+  background: var(--c);
+  box-shadow: 0 0 6px 2px var(--c), 0 0 16px 4px color-mix(in srgb, var(--c) 45%, transparent);
+  transform: translateY(2px);
+}
+/* Цоколь лампочки */
+.garland-bulb::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: #455a64;
+}
+
+/* Выключена: тусклое стекло без свечения */
+.garland-off .garland-bulb {
+  animation: none !important;
+  filter: brightness(0.3) saturate(0.4);
+  box-shadow: none;
+}
+
+.garland-on.garland-all .garland-bulb {
+  animation: garland-blink 1s steps(1, end) infinite;
+}
+.garland-on.garland-alternate .garland-bulb {
+  animation: garland-blink 0.9s steps(1, end) infinite;
+}
+.garland-on.garland-alternate .garland-bulb.odd {
+  animation-delay: -0.45s;
+}
+.garland-on.garland-chase .garland-bulb {
+  animation: garland-chase 1.5s linear infinite;
+  animation-delay: calc(var(--i) * -0.1s);
+}
+.garland-on.garland-twinkle .garland-bulb {
+  animation: garland-twinkle var(--tw-dur) ease-in-out infinite alternate;
+  animation-delay: var(--tw-delay);
+}
+
+@keyframes garland-blink {
+  0%   { filter: none; }
+  50%  { filter: brightness(0.3) saturate(0.4); box-shadow: none; }
+}
+@keyframes garland-chase {
+  0%, 100% { filter: brightness(0.35) saturate(0.5); box-shadow: none; }
+  15%      { filter: brightness(1.25); }
+  40%      { filter: brightness(0.35) saturate(0.5); box-shadow: none; }
+}
+@keyframes garland-twinkle {
+  from { filter: brightness(0.35) saturate(0.5); box-shadow: none; }
+  to   { filter: brightness(1.2); }
+}
+
+.garland-controls {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 100;
+  display: flex;
+  gap: 6px;
+}
+.garland-btn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.garland-btn:hover { background: rgba(0, 0, 0, 0.65); }
+
+@media (prefers-reduced-motion: reduce) {
+  .garland-on .garland-bulb { animation: none !important; }
+}
+
+/* Новогодние шапочки танцовщиц */
+.pd-hat-cap {
+  fill: #e0242b;
+  stroke: #7a0d12;
+  stroke-width: 0.6;
+}
+.pd-hat-fur {
+  fill: #fff;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.7));
+}
+
+.garland-btn-active {
+  background: #c62828;
+  border-color: #ffcdd2;
+  animation: garland-btn-pulse 0.234s ease-in-out infinite alternate;
+}
+.garland-btn-active:hover { background: #b71c1c; }
+@keyframes garland-btn-pulse {
+  to { box-shadow: 0 0 10px 2px rgba(255, 82, 82, 0.7); }
+}
+
+/* Снегопад поверх всего экрана; кнопки управления остаются над ним */
+.snowfall {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 90;
+  pointer-events: none;
+}
+.garland-btn-snow {
+  background: #1565c0;
+  border-color: #bbdefb;
+}
+.garland-btn-snow:hover { background: #0d47a1; }
+
+/* Значок доллара, отчеканенный на монетке */
+.pd-tip-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.pd-tip-dollar {
+  font: 900 24px/1 Georgia, "Times New Roman", serif;
+  color: #7a5200;
+  text-shadow: 0 1px 0 #fff3b0, 0 -1px 0 rgba(0, 0, 0, 0.35);
 }

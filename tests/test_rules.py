@@ -579,3 +579,37 @@ async def test_max_four_players_enforced_on_start(engine, db, manager):
     with pytest.raises(GameActionError) as exc:
         await manager.start_round(session.join_code, db)
     assert exc.value.error_type == "too_many_players"
+
+
+@pytest.mark.asyncio
+async def test_table_cleared_after_round(engine, db, manager):
+    """Старшая карта забирает банк, после раунда стол пуст"""
+    session, players = await make_session(db, ["alice", "bob"])
+    await seed_cards(db, list(range(2, 14)) * 4)
+    connect(manager, session.join_code, players)
+    await manager.start_round(session.join_code, db, ante=100)
+
+    a, b = players
+    hand_a = await hand_cards(db, a.id)
+    card = max(hand_a, key=lambda x: x[2])
+    await manager.handle_play_card(a.id, card[1], "a1", db)
+
+    # Пока раунд идёт, карта лежит на столе. Если её некому перебить,
+    # раунд закрывается сразу же, и стол уже пуст
+    round_obj = await manager._current_round(session.id, db)
+    state = await manager._build_state(session.join_code, a.id, db)
+    if round_obj.status == "active":
+        assert len(state["table_cards"]) == 1
+        await manager.handle_fold(b.id, "b1", db)
+
+    round_obj = await manager._current_round(session.id, db)
+    assert round_obj.status == "finished"
+    finished = [
+        m for m in manager._player_to_room[a.id].websocket.sent
+        if m.get("type") == "round_finished"
+    ]
+    assert finished and finished[-1]["winner_player_id"] == a.id
+    assert finished[-1]["bank_won"] == 200
+
+    state = await manager._build_state(session.join_code, a.id, db)
+    assert state["table_cards"] == []

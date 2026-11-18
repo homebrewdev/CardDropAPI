@@ -27,8 +27,9 @@ DEFAULT_ANTE = 100
 MIN_ANTE = 1
 MAX_ANTE = 10000
 
-# Кто забирает банк, если карт в руке не осталось, а старшей карты на столе нет
-NO_LEADER_ORDER = "lowest"
+# Кто забирает банк, если карт в руке не осталось, а лидер не определён:
+# по правилам банк всегда у владельца старшей карты раунда
+NO_LEADER_ORDER = "highest"
 
 # Сколько последних сыгранных карт показывать на столе
 TABLE_CARDS_LIMIT = 4
@@ -838,7 +839,7 @@ class RoomManager:
 
         winner_id = round_obj.leader_player_id
         if winner_id is None and not any(p.folded for p in players):
-            # Карт не осталось и старшей карты нет — минимальная сила побеждает
+            # Лидер не записан — банк забирает старшая сыгранная карта раунда
             result = await db.execute(
                 select(RoundAction, Card)
                 .join(PlayerCard, RoundAction.player_card_id == PlayerCard.id)
@@ -847,7 +848,7 @@ class RoomManager:
                     RoundAction.round_id == round_obj.id,
                     RoundAction.action_type == "play",
                 )
-                .order_by(Card.power.asc())
+                .order_by(Card.power.desc(), RoundAction.id.desc())
                 .limit(1)
             )
             row = result.first()
@@ -995,9 +996,10 @@ class RoomManager:
 
         round_obj = await self._current_round(session.id, db)
 
-        # Карты на столе (последние сыгранные в раунде)
+        # Карты на столе (последние сыгранные в раунде). После завершения
+        # раунда стол очищается: банк уже ушёл победителю
         table_cards: List[PlayerCardResponse] = []
-        if round_obj:
+        if round_obj and round_obj.status == "active":
             result = await db.execute(
                 select(RoundAction, PlayerCard, Card)
                 .join(PlayerCard, RoundAction.player_card_id == PlayerCard.id)

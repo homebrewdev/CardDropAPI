@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Card } from "./Card";
 import { CoinPile } from "./CoinPile";
 import { PoleDancer } from "./PoleDancer";
+import { Garland } from "./Garland";
 import type { GameState, Player, PlayerCard } from "../types";
 
 interface GameTableProps {
@@ -10,6 +11,7 @@ interface GameTableProps {
   onPass: () => void;
   onStartRound: () => void;
   onDisconnect: () => void;
+  lastRound?: { winner: string | null; bank: number } | null;
 }
 
 export function GameTable({
@@ -18,11 +20,19 @@ export function GameTable({
   onPass,
   onStartRound,
   onDisconnect,
+  lastRound,
 }: GameTableProps) {
   const myPlayer = state.player;
   const isMyTurn = state.current_player_id === myPlayer.id;
   const isFinished = state.session_status === "finished";
   const canAct = isMyTurn && !myPlayer.folded && !isFinished;
+  // Раунд закрыт, банк выплачен, а партия продолжается: ход ни у кого,
+  // нужна новая раздача
+  const isRoundOver =
+    !isFinished &&
+    state.round_status === "finished" &&
+    !state.is_tiebreak &&
+    state.current_player_id === null;
 
   const allPlayers: Player[] = [state.player, ...state.other_players];
   const nicknameById = new Map(allPlayers.map((p) => [p.id, p.nickname]));
@@ -66,6 +76,7 @@ export function GameTable({
 
   return (
     <div className="game-table">
+      <Garland />
       <PoleDancer side="left" />
       <PoleDancer side="right" />
 
@@ -224,6 +235,45 @@ export function GameTable({
           )}
         </div>
       </div>
+
+      {isRoundOver && (
+        <div className="result-overlay">
+          <div className="result-box">
+            <h2>Раунд {state.round_number} окончен</h2>
+            {lastRound && (
+              <p>
+                {lastRound.winner ? (
+                  <>
+                    Банк <strong>{lastRound.bank}</strong> забирает{" "}
+                    <strong>{lastRound.winner}</strong>
+                  </>
+                ) : (
+                  "Банк никому не достался"
+                )}
+              </p>
+            )}
+            <ul>
+              {allPlayers
+                .slice()
+                .sort((a, b) => b.score - a.score)
+                .map((p) => (
+                  <li key={p.id}>
+                    <span>{p.nickname}</span>
+                    <span className="score">★ {p.score}</span>
+                  </li>
+                ))}
+            </ul>
+            <div className="waiting-actions">
+              <button className="btn btn-primary" onClick={onStartRound}>
+                Продолжить
+              </button>
+              <button className="btn btn-secondary" onClick={onDisconnect}>
+                Выйти
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isFinished && (
         <div className="result-overlay">

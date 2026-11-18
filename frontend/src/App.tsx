@@ -20,6 +20,7 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [lastRound, setLastRound] = useState<{ winner: string | null; bank: number } | null>(null);
 
   // Подписка одна на всё время жизни приложения: переподписка при каждом
   // входе копила бы обработчики и дублировала сообщения
@@ -33,6 +34,11 @@ function App() {
         setScreen(
           state.session_status === "waiting" ? "waiting" : "playing"
         );
+      } else if (msg.type === "round_finished") {
+        setLastRound({
+          winner: (msg.winner_nickname as string | null) ?? null,
+          bank: Number(msg.bank_won ?? 0),
+        });
       } else if (msg.type === "error") {
         setError(String(msg.message ?? "Ошибка сервера"));
       }
@@ -255,6 +261,7 @@ function App() {
           onPlayCard={handlePlayCard}
           onPass={handlePass}
           onStartRound={handleStartRound}
+          lastRound={lastRound}
           onDisconnect={handleDisconnect}
         />
       )}
